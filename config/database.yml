@@ -84,6 +84,4 @@ development:
 #
 production:
   <<: *default
-  database: movie_explorer_production
-  username: movie_explorer
-  password: <%= ENV["MOVIE_EXPLORER_DATABASE_PASSWORD"] %>
+  url: <%= ENV['DATABASE_URL'] %>
