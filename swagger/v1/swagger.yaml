@@ -12,7 +12,7 @@ info:
 servers:
   - url: http://localhost:3000
     description: Development server
-  - url: https://your-production-url.com
+  - url: https://movie-explorer-ror-vishal-kanojia.onrender.com
     description: Production server
 components:
   securitySchemes:

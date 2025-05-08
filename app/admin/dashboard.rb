@@ -86,12 +86,12 @@ ActiveAdmin.register_page "Dashboard" do
                 span "#{plan.capitalize}: ", style: "font-weight: bold;"
                 span count
                 div style: "background: #ddd; height: 10px; border-radius: 5px; overflow: hidden; margin-top: 5px;" do
-                  div style: "width: #{(count.to_f / Subscription.count * 100).round}%; background: #4CAF50; height: 100%;"
+                  percentage = Subscription.count.zero? ? 0 : (count.to_f / Subscription.count * 100).round
+                  div style: "width: #{percentage}% ..."
                 end
               end
             end
           end
-          div link_to("Manage Subscriptions", admin_subscriptions_path), class: "button", style: "margin-top: 10px; display: inline-block;"
         end
       end
     end
