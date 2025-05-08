@@ -1,0 +1,678 @@
+# swagger/v1/swagger.yaml
+openapi: 3.0.0
+info:
+  title: Movie Explorer+ API
+  version: 1.0.0
+  description: API for managing movies, users, and subscriptions in Movie Explorer+, a movie streaming platform.
+  contact:
+    email: support@movieexplorer.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: http://localhost:3000
+    description: Development server
+  - url: https://your-production-url.com
+    description: Production server
+components:
+  securitySchemes:
+    Bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained via /api/v1/users/sign_in or /api/v1/users
+  schemas:
+    Movie:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        genre:
+          type: string
+        release_year:
+          type: integer
+        rating:
+          type: number
+          format: float
+        director:
+          type: string
+        duration:
+          type: integer
+        main_lead:
+          type: string
+        streaming_platform:
+          type: string
+        description:
+          type: string
+        premium:
+          type: boolean
+        poster_url:
+          type: string
+          nullable: true
+          description: Cloudinary URL for the movie poster
+        banner_url:
+          type: string
+          nullable: true
+          description: Cloudinary URL for the movie banner
+      required:
+        - id
+        - title
+        - genre
+        - release_year
+        - rating
+        - director
+        - duration
+        - main_lead
+        - streaming_platform
+        - description
+        - premium
+    MovieList:
+      type: object
+      properties:
+        movies:
+          type: array
+          items:
+            $ref: '#/components/schemas/Movie'
+        meta:
+          type: object
+          properties:
+            current_page:
+              type: integer
+            total_pages:
+              type: integer
+          required:
+            - current_page
+            - total_pages
+      required:
+        - movies
+        - meta
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+        first_name:
+          type: string
+        last_name:
+          type: string
+        mobile_number:
+          type: string
+        role:
+          type: string
+          enum: [user, supervisor]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - email
+        - first_name
+        - last_name
+        - mobile_number
+        - role
+        - created_at
+        - updated_at
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: JWT token for authentication
+        user:
+          $ref: '#/components/schemas/User'
+      required:
+        - token
+        - user
+    SubscriptionSession:
+      type: object
+      properties:
+        session_id:
+          type: string
+          description: Stripe Checkout session ID
+        checkout_url:
+          type: string
+          description: URL to redirect the user to for completing the Stripe Checkout
+      required:
+        - session_id
+        - checkout_url
+    WebhookResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [success]
+      required:
+        - status
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        errors:
+          type: array
+          items:
+            type: string
+    DeviceTokenResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+security:
+  - Bearer: []
+paths:
+  /api/v1/users/sign_in:
+    post:
+      summary: User login
+      tags:
+        - Authentication
+      description: Authenticates a user and returns a JWT token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+              required:
+                - email
+                - password
+      responses:
+        '200':
+          description: Successful login
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid email or password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/users/sign_out:
+    delete:
+      summary: User logout
+      tags:
+        - Authentication
+      description: Logs out a user and revokes their JWT token.
+      security:
+        - Bearer: []
+      responses:
+        '204':
+          description: No Content
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/users:
+    post:
+      summary: User registration
+      tags:
+        - Authentication
+      description: Registers a new user and returns a JWT token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user:
+                  type: object
+                  properties:
+                    email:
+                      type: string
+                    password:
+                      type: string
+                    first_name:
+                      type: string
+                    last_name:
+                      type: string
+                    mobile_number:
+                      type: string
+                    role:
+                      type: string
+                      enum: [user, supervisor]
+                  required:
+                    - email
+                    - password
+                    - first_name
+                    - last_name
+                    - mobile_number
+                    - role
+              required:
+                - user
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '422':
+          description: Unprocessable Entity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/users/update_device_token:
+    patch:
+      summary: Update FCM device token
+      tags:
+        - Users
+      description: Updates the Firebase Cloud Messaging device token for push notifications.
+      security:
+        - Bearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                device_token:
+                  type: string
+              required:
+                - device_token
+      responses:
+        '200':
+          description: Successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceTokenResponse'
+        '422':
+          description: Unprocessable Entity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/movies:
+    get:
+      summary: List movies
+      tags:
+        - Movies
+      description: Returns a paginated list of movies, filtered by title, genre, release_year, min_rating, or premium status. Non-premium users cannot access premium movies.
+      security:
+        - Bearer: []
+      parameters:
+        - name: title
+          in: query
+          schema:
+            type: string
+          description: Filter by movie title (partial match)
+        - name: genre
+          in: query
+          schema:
+            type: string
+          description: Filter by movie genre
+        - name: release_year
+          in: query
+          schema:
+            type: integer
+          description: Filter by release year
+        - name: min_rating
+          in: query
+          schema:
+            type: number
+            format: float
+          description: Filter by minimum rating
+        - name: premium
+          in: query
+          schema:
+            type: boolean
+          description: Filter by premium status
+        - name: page
+          in: query
+          schema:
+            type: integer
+          description: Page number for pagination
+      responses:
+        '200':
+          description: Successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MovieList'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Create movie
+      tags:
+        - Movies
+      description: Creates a new movie (supervisor-only). Supports poster and banner uploads via Cloudinary.
+      security:
+        - Bearer: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                genre:
+                  type: string
+                release_year:
+                  type: integer
+                rating:
+                  type: number
+                  format: float
+                director:
+                  type: string
+                duration:
+                  type: integer
+                main_lead:
+                  type: string
+                streaming_platform:
+                  type: string
+                description:
+                  type: string
+                premium:
+                  type: boolean
+                poster:
+                  type: string
+                  format: binary
+                  description: Movie poster image
+                banner:
+                  type: string
+                  format: binary
+                  description: Movie banner image
+              required:
+                - title
+                - genre
+                - release_year
+                - rating
+                - director
+                - duration
+                - main_lead
+                - streaming_platform
+                - description
+                - premium
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Movie'
+        '422':
+          description: Unprocessable Entity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden (non-supervisor)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/movies/{id}:
+    get:
+      summary: Show movie
+      tags:
+        - Movies
+      description: Returns details of a specific movie.
+      security:
+        - Bearer: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Movie'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      summary: Update movie
+      tags:
+        - Movies
+      description: Updates an existing movie (supervisor-only).
+      security:
+        - Bearer: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                genre:
+                  type: string
+                release_year:
+                  type: integer
+                rating:
+                  type: number
+                  format: float
+                director:
+                  type: string
+                duration:
+                  type: integer
+                main_lead:
+                  type: string
+                streaming_platform:
+                  type: string
+                description:
+                  type: string
+                premium:
+                  type: boolean
+                poster:
+                  type: string
+                  format: binary
+                banner:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Movie'
+        '422':
+          description: Unprocessable Entity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden (non-supervisor)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Delete movie
+      tags:
+        - Movies
+      description: Deletes a movie (supervisor-only).
+      security:
+        - Bearer: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: No Content
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden (non-supervisor)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/subscriptions:
+    post:
+      summary: Create subscription
+      tags:
+        - Subscriptions
+      description: Initiates a Stripe Checkout session for a subscription (basic or premium).
+      security:
+        - Bearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                plan_type:
+                  type: string
+                  enum: [basic, premium]
+                  description: Subscription plan type
+              required:
+                - plan_type
+      responses:
+        '200':
+          description: Successful (returns Stripe session ID)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionSession'
+        '400':
+          description: Invalid plan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/subscriptions/webhook:
+    post:
+      summary: Stripe webhook
+      tags:
+        - Subscriptions
+      description: Handles Stripe webhook events (e.g., checkout.session.completed).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                object:
+                  type: string
+                type:
+                  type: string
+                data:
+                  type: object
+                  properties:
+                    object:
+                      type: object
+                      properties:
+                        customer_email:
+                          type: string
+                        metadata:
+                          type: object
+                          properties:
+                            plan_type:
+                              type: string
+                              enum: [basic, premium]
+              required:
+                - id
+                - object
+                - type
+                - data
+      responses:
+        '200':
+          description: Successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookResponse'
+        '400':
+          description: Webhook signature verification failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
