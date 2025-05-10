@@ -1,7 +1,6 @@
-# app/models/user.rb
 class User < ApplicationRecord
-  devise :database_authenticatable, :registerable, :rememberable, :validatable,
-         :jwt_authenticatable, jwt_revocation_strategy: self
+  devise :database_authenticatable, :registerable, :validatable,
+         :jwt_authenticatable, jwt_revocation_strategy: BlacklistedToken
 
   enum role: { user: 0, supervisor: 1 }
 
@@ -17,26 +16,54 @@ class User < ApplicationRecord
   after_create :create_default_subscription
 
   def self.jwt_revoked?(jwt_payload, user)
-    BlacklistedToken.exists?(token: jwt_payload['jti'], user_id: user.id)
+    return false if jwt_payload.nil? || jwt_payload['jti'].nil?
+
+    blacklisted_token = BlacklistedToken.find_by(jti: jwt_payload['jti'], user_id: user.id)
+    return false unless blacklisted_token
+
+    if blacklisted_token.expires_at < Time.current
+      blacklisted_token.destroy
+      return false
+    end
+
+    true
   end
 
   def self.revoke_jwt(jwt_payload, user)
-    BlacklistedToken.create!(token: jwt_payload['jti'], user_id: user.id)
+    jti = jwt_payload['jti']
+    return if jti.nil? || BlacklistedToken.exists?(jti: jti)
+
+    BlacklistedToken.create!(
+      jti: jti,
+      user_id: user.id,
+      expires_at: Time.at(jwt_payload['exp'])
+    )
+  rescue => e
+    Rails.logger.error "JWT Revoke Error: #{e.message}"
+    raise
   end
 
   def generate_jwt
-    payload = { user_id: id, role: role, jti: SecureRandom.uuid, exp: 24.hours.from_now.to_i }
+    expiration_duration = ENV['JWT_EXPIRATION_TIME'].to_i || 24.hours.to_i
+    expiration_time = Time.now.to_i + expiration_duration
+    payload = { user_id: id, role: role, jti: SecureRandom.uuid, exp: expiration_time }
     JWT.encode(payload, ENV['JWT_SECRET'], 'HS256')
   end
 
-  def token_blacklisted?(token)
-    blacklisted_tokens.exists?(token: token)
+  def token_blacklisted?(jti)
+    blacklisted_tokens.exists?(jti: jti)
   end
 
   def self.authenticate(email, password)
     return nil if email.blank? || password.blank?
+
     user = find_by(email: email.downcase.strip)
-    user if user&.valid_password?(password)
+    if user && user.valid_password?(password)
+      return user
+    else
+      Rails.logger.error("Failed authentication attempt for email: #{email}")
+      nil
+    end
   end
 
   def supervisor?

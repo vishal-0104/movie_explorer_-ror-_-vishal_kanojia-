@@ -1,4 +1,8 @@
 class BlacklistedToken < ApplicationRecord
+  self.table_name = 'blacklisted_tokens'
+
   belongs_to :user
-  validates :token, presence: true, uniqueness: true
+
+  validates :jti, presence: true, uniqueness: true
+  validates :expires_at, presence: true
 end

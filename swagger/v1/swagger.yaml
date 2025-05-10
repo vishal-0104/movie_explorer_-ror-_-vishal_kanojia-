@@ -1,4 +1,3 @@
-# swagger/v1/swagger.yaml
 openapi: 3.0.0
 info:
   title: Movie Explorer+ API
@@ -166,6 +165,18 @@ components:
           type: string
       required:
         - message
+    SignOutResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Confirmation message
+        jti:
+          type: string
+          description: The JTI of the revoked token
+      required:
+        - message
+        - jti
 security:
   - Bearer: []
 paths:
@@ -207,14 +218,34 @@ paths:
       summary: User logout
       tags:
         - Authentication
-      description: Logs out a user and revokes their JWT token.
+      description: Logs out a user and revokes their JWT token. Returns a confirmation message and the revoked JTI, along with headers X-Revoked and X-JTI.
       security:
         - Bearer: []
       responses:
-        '204':
-          description: No Content
+        '200':
+          description: Successful sign-out
+          headers:
+            X-Revoked:
+              schema:
+                type: string
+                enum: ['true']
+              description: Indicates the token was successfully revoked
+            X-JTI:
+              schema:
+                type: string
+              description: The JTI of the revoked token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignOutResponse'
         '401':
-          description: Unauthorized
+          description: Unauthorized (user not authenticated or token missing)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Unprocessable Entity (invalid or malformed JWT token)
           content:
             application/json:
               schema:
