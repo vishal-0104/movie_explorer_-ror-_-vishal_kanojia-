@@ -7,7 +7,7 @@ class User < ApplicationRecord
   validates :first_name, presence: true
   validates :last_name, presence: true
   validates :email, presence: true, uniqueness: { case_sensitive: false }, format: { with: URI::MailTo::EMAIL_REGEXP }
-  validates :mobile_number, presence: true, uniqueness: true, length: { minimum: 10, maximum: 15 } # Relaxed for international formats
+  validates :mobile_number, presence: true, uniqueness: true, length: { is: 10 }
   validates :device_token, uniqueness: true, allow_nil: true
   before_save { self.email = email.downcase }
 
@@ -38,13 +38,13 @@ class User < ApplicationRecord
       user_id: user.id,
       expires_at: Time.at(jwt_payload['exp'])
     )
-  rescue StandardError => e
-    Rails.logger.error "[JWT Revoke] Error for user #{user.id}: #{e.message}"
+  rescue => e
+    Rails.logger.error "JWT Revoke Error: #{e.message}"
     raise
   end
 
   def generate_jwt
-    expiration_duration = ENV['JWT_EXPIRATION_TIME']&.to_i || 24.hours.to_i
+    expiration_duration = ENV['JWT_EXPIRATION_TIME'].to_i || 24.hours.to_i
     expiration_time = Time.now.to_i + expiration_duration
     payload = { user_id: id, role: role, jti: SecureRandom.uuid, exp: expiration_time }
     JWT.encode(payload, ENV['JWT_SECRET'], 'HS256')
@@ -55,11 +55,15 @@ class User < ApplicationRecord
   end
 
   def self.authenticate(email, password)
-    user = find_by(email: email&.downcase&.strip)
-    user&.valid_password?(password) ? user : nil
-  rescue StandardError => e
-    Rails.logger.error "[Authentication] Error for email #{email}: #{e.message}"
-    nil
+    return nil if email.blank? || password.blank?
+
+    user = find_by(email: email.downcase.strip)
+    if user && user.valid_password?(password)
+      return user
+    else
+      Rails.logger.error("Failed authentication attempt for email: #{email}")
+      nil
+    end
   end
 
   def supervisor?
@@ -71,21 +75,11 @@ class User < ApplicationRecord
   end
 
   def premium?
-    subscription&.active? && subscription.plan_type.in?(%w[basic premium])
+    subscription&.active? && %w[basic premium].include?(subscription&.plan_type)
   end
 
   def can_access_premium_movies?
     premium?
-  end
-
-  def update_device_token(token)
-    return if token == device_token
-
-    update(device_token: token&.strip.presence)
-  end
-
-  def self.with_active_subscription
-    joins(:subscription).where(subscriptions: { status: 'active' })
   end
 
   def self.ransackable_attributes(auth_object = nil)
@@ -99,14 +93,6 @@ class User < ApplicationRecord
   private
 
   def create_default_subscription
-    return if subscription
-
-    build_subscription(
-      plan_type: 'free',
-      status: 'active',
-      start_date: Time.current
-    ).save
-  rescue StandardError => e
-    Rails.logger.error "[Default Subscription] Error for user #{id}: #{e.message}"
+    build_subscription(plan_type: :free, status: :active, start_date: Time.current).save! unless subscription
   end
 end
