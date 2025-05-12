@@ -1,5 +1,6 @@
 # app/controllers/api/v1/users_controller.rb
 class Api::V1::UsersController < ApplicationController
+  skip_before_action :verify_authenticity_token
   before_action :authenticate_api_v1_user!
 
   def update_device_token

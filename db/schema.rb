@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2025_05_09_061228) do
+ActiveRecord::Schema[7.2].define(version: 2025_05_12_050755) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -83,7 +83,7 @@ ActiveRecord::Schema[7.2].define(version: 2025_05_09_061228) do
     t.string "title", null: false
     t.string "genre", null: false
     t.integer "release_year", null: false
-    t.decimal "rating", precision: 3, scale: 1, null: false
+    t.decimal "rating", precision: 3, scale: 1, default: "0.0", null: false
     t.string "director", null: false
     t.integer "duration", null: false
     t.string "main_lead", null: false
@@ -92,6 +92,10 @@ ActiveRecord::Schema[7.2].define(version: 2025_05_09_061228) do
     t.boolean "premium", default: false, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.index ["genre"], name: "index_movies_on_genre"
+    t.index ["premium"], name: "index_movies_on_premium"
+    t.index ["release_year"], name: "index_movies_on_release_year"
+    t.index ["title"], name: "index_movies_on_title"
   end
 
   create_table "subscriptions", force: :cascade do |t|
@@ -103,6 +107,8 @@ ActiveRecord::Schema[7.2].define(version: 2025_05_09_061228) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.string "stripe_subscription_id"
+    t.index ["plan_type"], name: "index_subscriptions_on_plan_type"
+    t.index ["status"], name: "index_subscriptions_on_status"
     t.index ["user_id"], name: "index_subscriptions_on_user_id", unique: true
   end
 

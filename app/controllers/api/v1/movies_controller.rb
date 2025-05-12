@@ -1,4 +1,3 @@
-# app/controllers/api/v1/movies_controller.rb
 class Api::V1::MoviesController < ApplicationController
   before_action :authenticate_api_v1_user!
   before_action :restrict_to_supervisor, only: [:create, :update, :destroy]
@@ -6,17 +5,26 @@ class Api::V1::MoviesController < ApplicationController
 
   def index
     movies = Movie.search_and_filter(params.slice(:title, :genre, :release_year, :min_rating, :premium))
-    movies = movies.where(premium: false) unless current_api_v1_user.can_access_premium_movies?
+    
     movies = movies.page(params[:page]).per(10)
     render json: {
       movies: movies.as_json(methods: [:poster_url, :banner_url]),
-      meta: { current_page: movies.current_page, total_pages: movies.total_pages }
-    }
+      meta: { current_page: movies.current_page, total_pages: movies.total_pages, total_count: movies.total_count }
+    }, status: :ok
   end
 
   def show
     movie = Movie.find(params[:id])
-    render json: movie.as_json(methods: [:poster_url, :banner_url])
+    
+    # Check if the user can access the movie (premium check)
+    if movie.premium && !current_api_v1_user.can_access_premium_movies?
+      render json: { error: 'Premium subscription required to view this movie' }, status: :forbidden
+      return
+    end
+    
+    render json: movie.as_json(methods: [:poster_url, :banner_url]), status: :ok
+  rescue ActiveRecord::RecordNotFound
+    render json: { error: 'Movie not found' }, status: :not_found
   end
 
   def create
@@ -32,16 +40,20 @@ class Api::V1::MoviesController < ApplicationController
     movie = Movie.find(params[:id])
     result = movie.update_movie(movie_params)
     if result[:success]
-      render json: result[:movie].as_json(methods: [:poster_url, :banner_url])
+      render json: result[:movie].as_json(methods: [:poster_url, :banner_url]), status: :ok
     else
       render json: { errors: result[:errors] }, status: :unprocessable_entity
     end
+  rescue ActiveRecord::RecordNotFound
+    render json: { error: 'Movie not found' }, status: :not_found
   end
 
   def destroy
     movie = Movie.find(params[:id])
     movie.destroy
     head :no_content
+  rescue ActiveRecord::RecordNotFound
+    render json: { error: 'Movie not found' }, status: :not_found
   end
 
   private

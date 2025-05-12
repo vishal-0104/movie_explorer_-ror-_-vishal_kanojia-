@@ -1,20 +1,25 @@
-# app/models/movie.rb
 class Movie < ApplicationRecord
   validates :title, :genre, :release_year, :rating, :director, :duration, :main_lead, :streaming_platform, :description, presence: true
   validates :premium, inclusion: { in: [true, false] }
+  validates :rating, numericality: { greater_than_or_equal_to: 0, less_than_or_equal_to: 10 }
+  validates :release_year, numericality: { greater_than: 1888, only_integer: true }
 
   has_one_attached :poster
   has_one_attached :banner
+  validates :poster, content_type: ['image/jpeg', 'image/png', 'image/gif']
+  validates :banner, content_type: ['image/jpeg', 'image/png', 'image/gif']
 
-  after_create :send_notification
+  after_create :send_new_movie_notification
+  after_update :send_updated_movie_notification
+  after_destroy :send_deleted_movie_notification
 
   def self.search_and_filter(params)
     movies = all
     movies = movies.where('title ILIKE ?', "%#{params[:title]}%") if params[:title].present?
     movies = movies.where(genre: params[:genre]) if params[:genre].present?
     movies = movies.where(release_year: params[:release_year]) if params[:release_year].present?
-    movies = movies.where('rating >= ?', params[:min_rating]) if params[:min_rating].present?
-    movies = movies.where(premium: params[:premium]) if params[:premium].present?
+    movies = movies.where('rating >= ?', params[:min_rating].to_f) if params[:min_rating].present?
+    movies = movies.where(premium: params[:premium]) if params[:premium].present? && params[:premium].in?(['true', 'false', true, false])
     movies
   end
 
@@ -40,23 +45,20 @@ class Movie < ApplicationRecord
   end
 
   def poster_url
-    if poster.attached?
-      # Use Cloudinary URL if configured, otherwise Active Storage URL
-      if poster.service.is_a?(ActiveStorage::Service::CloudinaryService)
-        poster.url
-      else
-        Rails.application.routes.url_helpers.rails_blob_url(poster, only_path: true)
-      end
+    return unless poster.attached?
+    if poster.service.is_a?(ActiveStorage::Service::CloudinaryService)
+      poster.url
+    else
+      Rails.application.routes.url_helpers.rails_blob_url(poster, only_path: true)
     end
   end
 
   def banner_url
-    if banner.attached?
-      if banner.service.is_a?(ActiveStorage::Service::CloudinaryService)
-        banner.url
-      else
-        Rails.application.routes.url_helpers.rails_blob_url(banner, only_path: true)
-      end
+    return unless banner.attached?
+    if banner.service.is_a?(ActiveStorage::Service::CloudinaryService)
+      banner.url
+    else
+      Rails.application.routes.url_helpers.rails_blob_url(banner, only_path: true)
     end
   end
 
@@ -68,31 +70,17 @@ class Movie < ApplicationRecord
     []
   end
 
-  after_create :send_notification
   private
 
-  def send_notification
-    return unless User.exists?(device_token: present?) # Skip if no users with device tokens
+  def send_new_movie_notification
+    NotificationService.send_new_movie_notification(self)
+  end
 
-    device_tokens = User.where.not(device_token: [nil, '']).pluck(:device_token)
-    return if device_tokens.empty?
+  def send_updated_movie_notification
+    NotificationService.send_updated_movie_notification(self)
+  end
 
-    notification = {
-      title: 'New Movie Added!',
-      body: "#{title} is now available on #{streaming_platform}.",
-      data: {
-        movie_id: id.to_s,
-        poster_url: poster_url || '',
-        banner_url: banner_url || ''
-      }
-    }
-
-    device_tokens.each do |token|
-      begin
-        FCMService.send_notification(token, notification)
-      rescue StandardError => e
-        Rails.logger.error "Failed to send notification to #{token}: #{e.message}"
-      end
-    end
+  def send_deleted_movie_notification
+    NotificationService.send_deleted_movie_notification(self)
   end
 end
