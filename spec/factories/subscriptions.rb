@@ -1,9 +1,9 @@
+# spec/factories/subscriptions.rb
 FactoryBot.define do
   factory :subscription do
-    user
-    plan_type { 'premium' }
-    status { 'active' }
+    plan_type { :free }
+    status    { :active }
     start_date { Time.current }
-    end_date { 1.year.from_now }
+    user
   end
 end

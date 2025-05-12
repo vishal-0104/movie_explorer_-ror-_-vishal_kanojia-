@@ -478,6 +478,8 @@ GEM
       rexml (~> 3.2, >= 3.2.5)
       rubyzip (>= 1.2.2, < 3.0)
       websocket (~> 1.0)
+    shoulda-matchers (6.5.0)
+      activesupport (>= 5.2.0)
     signet (0.20.0)
       addressable (~> 2.8)
       faraday (>= 0.17.5, < 3.a)
@@ -569,6 +571,7 @@ DEPENDENCIES
   rubocop-rails-omakase
   sassc-embedded (~> 1.77)
   selenium-webdriver
+  shoulda-matchers
   sprockets-rails
   stimulus-rails
   stripe

@@ -75,6 +75,7 @@ group :development, :test do
   gem 'rspec-rails', '~> 6.1'           # Testing framework
   gem 'factory_bot_rails', '~> 6.4'     # Test data generation
   gem 'faker', '~> 3.4'                 # Fake data for seeding
+  gem 'shoulda-matchers'
 end
 
 gem 'cloudinary'
