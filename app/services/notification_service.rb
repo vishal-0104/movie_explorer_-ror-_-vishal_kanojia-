@@ -25,36 +25,51 @@ class NotificationService
   def self.send_fcm_notification(tokens, title, body, data = {})
     return if tokens.empty?
 
+    # Filter out invalid tokens
+    valid_tokens = tokens.select { |t| t&.match?(/\A[a-zA-Z0-9:_\-\.]{100,200}\z/) }
+    invalid_tokens = tokens - valid_tokens
+    invalid_tokens.each do |token|
+      Rails.logger.warn("Skipping invalid FCM token: #{token}")
+      User.where(device_token: token).update_all(device_token: nil) if token.match?(/\AeyJ/)
+    end
+
+    return if valid_tokens.empty?
+
     headers = {
       'Authorization': "Bearer #{get_access_token}",
       'Content-Type': 'application/json'
     }
 
-    body = {
-      message: {
-        notification: {
-          title: title,
-          body: body
-        },
-        data: data.transform_keys(&:to_s),
-        tokens: Array(tokens)
-      }
-    }.to_json
+    responses = []
+    valid_tokens.each do |token|
+      payload = {
+        message: {
+          token: token,
+          notification: {
+            title: title,
+            body: body
+          },
+          data: data.transform_keys(&:to_s)
+        }
+      }.to_json
 
-    response = HTTParty.post(
-      "https://fcm.googleapis.com/v1/projects/#{ENV['FCM_PROJECT_ID']}/messages:send",
-      headers: headers,
-      body: body
-    )
+      response = HTTParty.post(
+        "https://fcm.googleapis.com/v1/projects/#{ENV['FCM_PROJECT_ID']}/messages:send",
+        headers: headers,
+        body: payload
+      )
 
-    if response.success?
-      Rails.logger.info("FCM multicast notification sent to #{tokens.size} tokens")
-      handle_response_errors(response.parsed_response, Array(tokens))
-    else
-      Rails.logger.error("FCM notification failed: #{response.body}")
+      if response.success?
+        Rails.logger.info("FCM notification sent to token: #{token}")
+      else
+        Rails.logger.error("FCM notification failed for token #{token}: #{response.body}")
+      end
+
+      responses << response
     end
 
-    response
+    handle_response_errors(responses, valid_tokens)
+    responses
   rescue StandardError => e
     Rails.logger.error("FCM notification error: #{e.message}")
     nil
@@ -76,7 +91,7 @@ class NotificationService
     return unless user.device_token
 
     send_fcm_notification(
-      user.device_token,
+      [user.device_token],
       "Subscription Activated!",
       "Your #{plan_type.capitalize} subscription has been successfully activated.",
       {
@@ -91,7 +106,7 @@ class NotificationService
     return unless user.device_token
 
     send_fcm_notification(
-      user.device_token,
+      [user.device_token],
       "Payment Failed",
       "There was an issue with your subscription payment. Please update your payment method.",
       {
@@ -106,9 +121,9 @@ class NotificationService
   def self.send_movie_notification(movie, title_prefix, body_action)
     users = movie.premium? ? User.with_active_subscription : User.all
     device_tokens = users.where.not(device_token: nil).pluck(:device_token)
-  
+
     return if device_tokens.empty?
-  
+
     device_tokens.each_slice(500) do |token_batch|
       send_fcm_notification(
         token_batch,
@@ -124,21 +139,23 @@ class NotificationService
     end
   end
 
-  def self.handle_response_errors(response, tokens)
-    return unless response['results']
+  def self.handle_response_errors(responses, tokens)
+    responses.each_with_index do |response, index|
+      next unless response.parsed_response&.dig('error')
 
-    response['results'].each_with_index do |result, index|
-      if result['error']
-        error_code = result['error']['code']
-        error_message = result['error']['message']
-        token = tokens[index]
+      error_code = response.parsed_response.dig('error', 'code')
+      error_message = response.parsed_response.dig('error', 'message')
+      fcm_error_code = response.parsed_response.dig('error', 'details')&.find { |d| d['@type'] == 'type.googleapis.com/google.firebase.fcm.v1.FcmError' }&.dig('errorCode')
+      token = tokens[index]
 
-        Rails.logger.warn("FCM error for token #{token}: #{error_code} - #{error_message}")
+      Rails.logger.warn("FCM error for token #{token}: #{error_code} - #{error_message}#{fcm_error_code ? " (FCM errorCode: #{fcm_error_code})" : ''}")
 
-        if %w[NotRegistered InvalidRegistration].include?(error_message)
-          User.where(device_token: token).update_all(device_token: nil)
-          Rails.logger.info("Removed invalid FCM token: #{token}")
-        end
+      if token.match?(/\AeyJ/)
+        Rails.logger.warn("Invalid device_token detected: JWT used instead of FCM token (#{token})")
+        User.where(device_token: token).update_all(device_token: nil)
+      elsif fcm_error_code == 'UNREGISTERED' || error_message&.include?('NotRegistered') || error_message&.include?('InvalidRegistration')
+        User.where(device_token: token).update_all(device_token: nil)
+        Rails.logger.info("Removed invalid FCM token: #{token}")
       end
     end
   end

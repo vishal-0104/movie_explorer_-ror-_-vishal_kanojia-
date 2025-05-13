@@ -8,7 +8,7 @@ class User < ApplicationRecord
   validates :last_name, presence: true
   validates :email, presence: true, uniqueness: { case_sensitive: false }, format: { with: URI::MailTo::EMAIL_REGEXP }
   validates :mobile_number, presence: true, uniqueness: true, length: { is: 10 }
-  validates :device_token, uniqueness: true, allow_nil: true
+  validates :device_token, format: { with: /\A[a-zA-Z0-9:_\-\.]{100,200}\z/, message: 'must be a valid FCM registration token' }, allow_nil: true
   before_save { self.email = email.downcase }
 
   has_many :blacklisted_tokens, dependent: :destroy
@@ -44,10 +44,12 @@ class User < ApplicationRecord
   end
 
   def generate_jwt
-    expiration_duration = ENV['JWT_EXPIRATION_TIME'].to_i || 24.hours.to_i
+    expiration_duration = 24.hours.to_i
     expiration_time = Time.now.to_i + expiration_duration
     payload = { user_id: id, role: role, jti: SecureRandom.uuid, exp: expiration_time }
-    JWT.encode(payload, ENV['JWT_SECRET'], 'HS256')
+  
+    secret_key = ENV['JWT_SECRET'] || Rails.application.credentials.jwt_secret
+    JWT.encode(payload, secret_key, 'HS256')
   end
 
   def token_blacklisted?(jti)
