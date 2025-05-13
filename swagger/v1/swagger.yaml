@@ -1,10 +1,11 @@
 openapi: 3.0.0
 info:
   title: Movie Explorer+ API
-  version: 1.0.0
+  version: v1.0.0
   description: API for managing movies, users, and subscriptions in Movie Explorer+, a movie streaming platform.
   contact:
     email: support@movieexplorer.com
+    url: https://movieexplorer.com/support
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
@@ -67,6 +68,20 @@ components:
         - streaming_platform
         - description
         - premium
+      example:
+        id: 1
+        title: "Inception"
+        genre: "Sci-Fi"
+        release_year: 2010
+        rating: 8.8
+        director: "Christopher Nolan"
+        duration: 148
+        main_lead: "Leonardo DiCaprio"
+        streaming_platform: "Netflix"
+        description: "A thief with the ability to enter dreams..."
+        premium: true
+        poster_url: "https://res.cloudinary.com/xxx/image/upload/poster.jpg"
+        banner_url: "https://res.cloudinary.com/xxx/image/upload/banner.jpg"
     MovieList:
       type: object
       properties:
@@ -129,24 +144,110 @@ components:
       required:
         - token
         - user
-    SubscriptionSession:
+    SubscriptionCreateRequest:
+      type: object
+      required:
+        - plan_id
+      properties:
+        plan_id:
+          type: string
+          enum: [free, basic, premium]
+          description: The ID of the subscription plan
+          example: premium
+    SubscriptionStatusResponse:
       type: object
       properties:
-        session_id:
+        plan:
           type: string
-          description: Stripe Checkout session ID
-        checkout_url:
+          enum: [free, basic, premium]
+          description: The current subscription plan
+          example: premium
+        status:
           type: string
-          description: URL to redirect the user to for completing the Stripe Checkout
+          enum: [pending, active, canceled, past_due]
+          description: Memoria status of the subscription
+          example: active
+        current_period_end:
+          type: string
+          format: date-time
+          nullable: true
+          description: The end date of the current billing period (null for free plans)
+          example: '2025-12-31T23:59:59Z'
       required:
-        - session_id
-        - checkout_url
+        - plan
+        - status
+    SubscriptionPaymentIntentResponse:
+      type: object
+      properties:
+        client_secret:
+          type: string
+          description: The client secret for the Stripe Payment Intent
+          example: pi_3Nxyz_secret_123
+        payment_intent_id:
+          type: string
+          description: The ID of the Stripe Payment Intent
+          example: pi_3Nxyz
+        subscription_id:
+          type: integer
+          description: The ID of the subscription in the database
+          example: 1
+      required:
+        - client_secret
+        - payment_intent_id
+        - subscription_id
+    SubscriptionConfirmRequest:
+      type: object
+      required:
+        - payment_intent_id
+      properties:
+        payment_intent_id:
+          type: string
+          description: The ID of the Stripe Payment Intent to confirm
+          example: pi_3Nxyz
+    SubscriptionConfirmResponse:
+      type: object
+      properties:
+        plan:
+          type: string
+          enum: [free, basic, premium]
+          description: The subscription plan
+          example: premium
+        status:
+          type: string
+          enum: [pending, active, canceled, past_due]
+          description: The status of the subscription
+          example: active
+        current_period_end:
+          type: string
+          format: date-time
+          nullable: true
+          description: The end date of the current billing period
+          example: '2025-12-31T23:59:59Z'
+      required:
+        - plan
+        - status
+    SubscriptionCancelResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Confirmation message for cancellation
+          example: Subscription canceled successfully
+        subscription_id:
+          type: string
+          description: The ID of the canceled subscription
+          example: sub_12345
+      required:
+        - message
+        - subscription_id
     WebhookResponse:
       type: object
       properties:
         status:
           type: string
           enum: [success]
+          description: Status of webhook processing
+          example: success
       required:
         - status
     Error:
@@ -154,10 +255,17 @@ components:
       properties:
         error:
           type: string
+          description: A brief error message
+          example: Invalid request
         errors:
           type: array
           items:
             type: string
+          description: Detailed error messages
+          example: ['Plan ID is invalid']
+      required:
+        - error
+        - errors
     DeviceTokenResponse:
       type: object
       properties:
@@ -185,7 +293,7 @@ paths:
       summary: User login
       tags:
         - Authentication
-      description: Authenticates a user and returns a JWT token.
+      description: Authenticates a user and returns a JWT token. Rate limited to 10 requests per minute per IP.
       requestBody:
         required: true
         content:
@@ -255,7 +363,7 @@ paths:
       summary: User registration
       tags:
         - Authentication
-      description: Registers a new user and returns a JWT token.
+      description: Registers a new user and returns a JWT token. Rate limited to 5 requests per minute per IP.
       requestBody:
         required: true
         content:
@@ -464,7 +572,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/ abonnement /schemas/Error'
         '403':
           description: Forbidden (non-supervisor)
           content:
@@ -618,10 +726,10 @@ paths:
                 $ref: '#/components/schemas/Error'
   /api/v1/subscriptions:
     post:
-      summary: Create subscription
+      summary: Create a new subscription
       tags:
         - Subscriptions
-      description: Initiates a Stripe Checkout session for a subscription (basic or premium).
+      description: Creates a new subscription for the authenticated user based on the provided plan ID. For 'free' plans, the subscription is created directly. For 'basic' or 'premium' plans, a Stripe Payment Intent is created, and the client must confirm the payment using the returned client_secret. Requires a valid JWT token. Rate limited to 10 requests per minute per user.
       security:
         - Bearer: []
       requestBody:
@@ -629,80 +737,176 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                plan_type:
-                  type: string
-                  enum: [basic, premium]
-                  description: Subscription plan type
-              required:
-                - plan_type
+              $ref: '#/components/schemas/SubscriptionCreateRequest'
       responses:
-        '200':
-          description: Successful (returns Stripe session ID)
+        '201':
+          description: Subscription created successfully (for free plan)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionSession'
+                $ref: '#/components/schemas/SubscriptionStatusResponse'
+        '200':
+          description: Stripe Payment Intent created (for basic/premium plans)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionPaymentIntentResponse'
         '400':
-          description: Invalid plan
+          description: Bad request (e.g., invalid plan ID)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
         '401':
-          description: Unauthorized
+          description: Unauthorized (invalid or missing token)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-  /api/v1/subscriptions/webhook:
+        '422':
+          description: Unprocessable Entity (e.g., validation errors)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/subscriptions/confirm:
     post:
-      summary: Stripe webhook
+      summary: Confirm a subscription payment
       tags:
         - Subscriptions
-      description: Handles Stripe webhook events (e.g., checkout.session.completed).
+      description: Confirms a subscription payment using the provided Stripe Payment Intent ID. Updates the subscription to 'active' if the payment is successful. Requires a valid JWT token. Rate limited to 10 requests per minute per user.
+      security:
+        - Bearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubscriptionConfirmRequest'
+      responses:
+        '200':
+          description: Payment confirmed and subscription activated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionConfirmResponse'
+        '400':
+          description: Bad request (e.g., payment not completed or invalid Payment Intent ID)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized (invalid or missing token)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Unprocessable Entity (e.g., no pending subscription)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/subscriptions/cancel:
+    post:
+      summary: Cancel a subscription
+      tags:
+        - Subscriptions
+      description: Cancels the authenticated user’s active subscription via Stripe. Requires a valid JWT token. Rate limited to 5 requests per minute per user.
+      security:
+        - Bearer: []
+      responses:
+        '200':
+          description: Subscription canceled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionCancelResponse'
+        '401':
+          description: Unauthorized (invalid or missing token)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Subscription not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Unprocessable Entity (e.g., subscription already canceled)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/subscriptions/status:
+    get:
+      summary: Get current subscription status
+      tags:
+        - Subscriptions
+      description: Retrieves the subscription status for the authenticated user. Requires a valid JWT token.
+      security:
+        - Bearer: []
+      responses:
+        '200':
+          description: Subscription status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionStatusResponse'
+        '401':
+          description: Unauthorized (invalid or missing token)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No active subscription found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/webhooks/stripe:
+    post:
+      summary: Stripe webhook endpoint
+      tags:
+        - Webhooks
+      description: Handles Stripe webhook events (e.g., payment intent successes, payment failures, invoice payment failures). Secured via Stripe webhook signature verification, not Bearer token.
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              properties:
-                id:
-                  type: string
-                object:
-                  type: string
-                type:
-                  type: string
+              description: Stripe webhook payload
+              example:
+                id: evt_12345
+                type: payment_intent.succeeded
                 data:
-                  type: object
-                  properties:
-                    object:
-                      type: object
-                      properties:
-                        customer_email:
-                          type: string
-                        metadata:
-                          type: object
-                          properties:
-                            plan_type:
-                              type: string
-                              enum: [basic, premium]
-              required:
-                - id
-                - object
-                - type
-                - data
+                  object:
+                    id: pi_12345
+                    status: succeeded
+                    metadata:
+                      user_id: '1'
+                      plan_id: premium
       responses:
         '200':
-          description: Successful
+          description: Webhook processed successfully
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/WebhookResponse'
         '400':
-          description: Webhook signature verification failed
+          description: Invalid payload or signature
           content:
             application/json:
               schema:
