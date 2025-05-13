@@ -5,7 +5,6 @@ class Api::V1::MoviesController < ApplicationController
 
   def index
     movies = Movie.search_and_filter(params.slice(:title, :genre, :release_year, :min_rating, :premium))
-    
     movies = movies.page(params[:page]).per(10)
     render json: {
       movies: movies.as_json(methods: [:poster_url, :banner_url]),
@@ -16,8 +15,7 @@ class Api::V1::MoviesController < ApplicationController
   def show
     movie = Movie.find(params[:id])
     
-    # Check if the user can access the movie (premium check)
-    if movie.premium && !current_api_v1_user.can_access_premium_movies?
+    if movie.premium && current_api_v1_user && !current_api_v1_user.can_access_premium_movies?
       render json: { error: 'Premium subscription required to view this movie' }, status: :forbidden
       return
     end
@@ -51,7 +49,7 @@ class Api::V1::MoviesController < ApplicationController
   def destroy
     movie = Movie.find(params[:id])
     movie.destroy
-    head :no_content
+    render json: { message: 'Movie deleted successfully', id: movie.id }, status: :ok
   rescue ActiveRecord::RecordNotFound
     render json: { error: 'Movie not found' }, status: :not_found
   end
@@ -62,13 +60,15 @@ class Api::V1::MoviesController < ApplicationController
     params.permit(
       :title, :genre, :release_year, :rating, :director, :duration,
       :main_lead, :streaming_platform, :description, :premium, :poster, :banner
-    )
+    ).tap do |whitelisted|
+      whitelisted[:premium] = ActiveModel::Type::Boolean.new.cast(whitelisted[:premium]) if whitelisted[:premium].present?
+    end
   end
 
   def restrict_to_supervisor
-    unless current_api_v1_user.supervisor?
-      Rails.logger.info("Access denied: #{current_api_v1_user.email} is not a supervisor")
-      render json: { error: 'Unauthorized' }, status: :forbidden
+    unless current_api_v1_user&.supervisor?
+      Rails.logger.warn("Unauthorized access attempt by user: #{current_api_v1_user&.email || 'Unauthenticated'}")
+      render json: { error: 'Only supervisors can perform this action' }, status: :forbidden
     end
   end
 end

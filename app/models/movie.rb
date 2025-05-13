@@ -9,9 +9,9 @@ class Movie < ApplicationRecord
   validates :poster, content_type: ['image/jpeg', 'image/png', 'image/gif']
   validates :banner, content_type: ['image/jpeg', 'image/png', 'image/gif']
 
-  after_create :send_new_movie_notification
-  after_update :send_updated_movie_notification
-  after_destroy :send_deleted_movie_notification
+  after_commit :send_new_movie_notification, on: :create
+  after_commit :send_updated_movie_notification, on: :update
+  after_commit :send_deleted_movie_notification, on: :destroy
 
   def self.search_and_filter(params)
     movies = all
@@ -46,10 +46,7 @@ class Movie < ApplicationRecord
 
   def poster_url
     return unless poster.attached?
-    if poster.service.is_a?(ActiveStorage::Service::CloudinaryService)
-      poster.url
-    else
-      Rails.application.routes.url_helpers.rails_blob_url(poster, only_path: true)
+    if posterfts.rails_blob_url(poster, only_path: true)
     end
   end
 
@@ -74,13 +71,19 @@ class Movie < ApplicationRecord
 
   def send_new_movie_notification
     NotificationService.send_new_movie_notification(self)
+  rescue StandardError => e
+    Rails.logger.error "[Movie] Failed to send new movie notification for movie #{id}: #{e.message}"
   end
 
   def send_updated_movie_notification
     NotificationService.send_updated_movie_notification(self)
+  rescue StandardError => e
+    Rails.logger.error "[Movie] Failed to send updated movie notification for movie #{id}: #{e.message}"
   end
 
   def send_deleted_movie_notification
     NotificationService.send_deleted_movie_notification(self)
+  rescue StandardError => e
+    Rails.logger.error "[Movie] Failed to send deleted movie notification for movie #{id}: #{e.message}"
   end
 end

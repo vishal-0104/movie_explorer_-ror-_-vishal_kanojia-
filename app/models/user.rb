@@ -15,6 +15,13 @@ class User < ApplicationRecord
   has_one :subscription, dependent: :destroy
   after_create :create_default_subscription
 
+  # Scope to find users with active subscriptions
+  scope :with_active_subscription, -> {
+    joins(:subscription)
+      .where(subscriptions: { status: 'active' })
+      .where('subscriptions.end_date IS NULL OR subscriptions.end_date > ?', Time.current)
+  }
+
   def self.jwt_revoked?(jwt_payload, user)
     return false if jwt_payload.nil? || jwt_payload['jti'].nil?
 
@@ -43,31 +50,12 @@ class User < ApplicationRecord
     raise
   end
 
-  # def generate_jwt
-  #   expiration_duration = ENV['JWT_EXPIRATION_TIME'].to_i || 24.hours.to_i
-  #   expiration_time = Time.now.to_i + expiration_duration
-  #   payload = { user_id: id, role: role, jti: SecureRandom.uuid, exp: expiration_time }
-  #   Rails.logger.info "Generating JWT for user #{id} with payload: #{payload}"
-  #   JWT.encode(payload, ENV['JWT_SECRET'], 'HS256')
-  # end
   def generate_jwt
-    ist_zone = ActiveSupport::TimeZone['Kolkata']
-    now_ist = ist_zone.now
-    expiration_duration = ENV['JWT_EXPIRATION_TIME'].to_i
-    expiration_duration = 24.hours.to_i if expiration_duration.zero?
-  
-    expiration_time_utc = (now_ist + expiration_duration).utc.to_i
-  
-    payload = {
-      user_id: id,
-      role: role,
-      jti: SecureRandom.uuid,
-      exp: expiration_time_utc
-    }
-  
-    Rails.logger.info "Generating JWT for user #{id} with payload: #{payload}"
+    expiration_duration = ENV['JWT_EXPIRATION_TIME'].to_i || 24.hours.to_i
+    expiration_time = Time.now.to_i + expiration_duration
+    payload = { user_id: id, role: role, jti: SecureRandom.uuid, exp: expiration_time }
     JWT.encode(payload, ENV['JWT_SECRET'], 'HS256')
-  end  
+  end
 
   def token_blacklisted?(jti)
     blacklisted_tokens.exists?(jti: jti)
