@@ -1,7 +1,7 @@
 class Api::V1::MoviesController < ApplicationController
-  before_action :authenticate_api_v1_user!
+  before_action :authenticate_api_v1_user!, except: [:index, :show]
   before_action :restrict_to_supervisor, only: [:create, :update, :destroy]
-  skip_before_action :verify_authenticity_token, only: [:create, :update]
+  skip_before_action :verify_authenticity_token
 
   def index
     movies = Movie.search_and_filter(params.slice(:title, :genre, :release_year, :min_rating, :premium))
@@ -66,6 +66,7 @@ class Api::V1::MoviesController < ApplicationController
   end
 
   def restrict_to_supervisor
+    
     render json: { error: 'Unauthorized' }, status: :forbidden unless current_api_v1_user.supervisor?
   end
 end
