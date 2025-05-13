@@ -66,7 +66,9 @@ class Api::V1::MoviesController < ApplicationController
   end
 
   def restrict_to_supervisor
-    
-    render json: { error: 'Unauthorized' }, status: :forbidden unless current_api_v1_user.supervisor?
+    unless current_api_v1_user.supervisor?
+      Rails.logger.info("Access denied: #{current_api_v1_user.email} is not a supervisor")
+      render json: { error: 'Unauthorized' }, status: :forbidden
+    end
   end
 end

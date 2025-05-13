@@ -3,5 +3,5 @@ class ApplicationController < ActionController::Base
   # allow_browser versions: :modern
   # before_action :authenticate_user!
    
-   protect_from_forgery with: :null_session
+  #  protect_from_forgery with: :null_session
 end

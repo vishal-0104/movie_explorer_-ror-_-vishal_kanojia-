@@ -59,7 +59,7 @@ RSpec.describe User, type: :model do
     it 'returns a valid JWT token' do
       travel_to Time.current do
         ENV['JWT_SECRET'] = 'secret'
-        ENV['JWT_EXPIRATION_TIME'] = '86400' # 24 hours in seconds
+        ENV['JWT_EXPIRATION_TIME'] = '86400'
 
         token = user.generate_jwt
         decoded = JWT.decode(token, ENV['JWT_SECRET'], true, algorithm: 'HS256')
