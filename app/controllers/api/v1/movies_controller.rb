@@ -1,5 +1,5 @@
 class Api::V1::MoviesController < ApplicationController
-  before_action :authenticate_api_v1_user!, except: [:index, :show]
+  before_action :authenticate_api_v1_user!, except: [:index] # Include show in authentication
   before_action :restrict_to_supervisor, only: [:create, :update, :destroy]
   skip_before_action :verify_authenticity_token
 
@@ -15,7 +15,7 @@ class Api::V1::MoviesController < ApplicationController
   def show
     movie = Movie.find(params[:id])
     
-    if movie.premium && current_api_v1_user && !current_api_v1_user.can_access_premium_movies?
+    if movie.premium && !current_api_v1_user.can_access_premium_movies?
       render json: { error: 'Premium subscription required to view this movie' }, status: :forbidden
       return
     end

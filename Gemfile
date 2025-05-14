@@ -58,7 +58,8 @@ end
 
 gem "dotenv-rails"
 gem 'devise', '~> 4.9'                  # Authentication
-gem 'devise-jwt', '~> 0.11'             # JWT for API authentication
+gem 'devise-jwt', '~> 0.12'             # JWT for API authentication
+gem 'jwt'
 gem 'active_storage_validations', '~> 1.1' # For ActiveStorage validations
 gem 'rack-cors', '~> 2.0'               # CORS for frontend access
 gem 'kaminari', '~> 1.2'                # Pagination

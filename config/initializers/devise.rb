@@ -16,17 +16,17 @@ Devise.setup do |config|
   config.responder.redirect_status = :see_other
 
   config.jwt do |jwt|
-    jwt.secret = ENV['JWT_SECRET'] || Rails.application.credentials.jwt_secret
+    jwt.secret = Rails.application.credentials.jwt_secret || ENV['JWT_SECRET']
     jwt.dispatch_requests = [
       ['POST', %r{^/api/v1/users/sign_in$}]
     ]
     jwt.revocation_requests = [
       ['DELETE', %r{^/api/v1/users/sign_out$}]
     ]
-    jwt.expiration_time = ENV['JWT_EXPIRATION_TIME'].to_i || 24.hours.to_i
-
+    jwt.revocation_requests = []
+    jwt.expiration_time = ENV['JWT_EXPIRATION_TIME']&.to_i || 24.hours.to_i
     jwt.request_formats = {
-      api_v1: [:json]
+      api_v1_user: [:json]
     }
   end
 end

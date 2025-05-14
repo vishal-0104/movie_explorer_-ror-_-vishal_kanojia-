@@ -551,7 +551,7 @@ DEPENDENCIES
   cloudinary
   debug
   devise (~> 4.9)
-  devise-jwt (~> 0.11)
+  devise-jwt (~> 0.12)
   dotenv-rails
   factory_bot_rails (~> 6.4)
   faker (~> 3.4)
@@ -560,6 +560,7 @@ DEPENDENCIES
   image_processing (~> 1.12)
   importmap-rails
   jbuilder
+  jwt
   kaminari (~> 1.2)
   pg (~> 1.1)
   puma (>= 5.0)
