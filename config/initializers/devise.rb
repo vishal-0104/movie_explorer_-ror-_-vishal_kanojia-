@@ -24,5 +24,9 @@ Devise.setup do |config|
       ['DELETE', %r{^/api/v1/users/sign_out$}]
     ]
     jwt.expiration_time = ENV['JWT_EXPIRATION_TIME'].to_i || 24.hours.to_i
+
+    jwt.request_formats = {
+      api_v1: [:json]
+    }
   end
 end
