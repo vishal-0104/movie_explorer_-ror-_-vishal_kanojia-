@@ -1,11 +1,17 @@
-# app/controllers/api/v1/users/registrations_controller.rb
 class Api::V1::Users::RegistrationsController < Devise::RegistrationsController
   skip_before_action :verify_authenticity_token
   respond_to :json
 
   def create
     build_resource(sign_up_params)
+    resource.jti = SecureRandom.uuid
     resource.save
+    if resource.persisted?
+      sign_in(resource_name, resource) # Sign in the user
+      # Manually generate JWT token
+      token = Warden::JWTAuth::UserEncoder.new.call(resource, :user, nil)
+      request.env['warden-jwt_auth.token'] = token # Store token in env for response
+    end
     respond_with(resource)
   end
 
@@ -18,7 +24,7 @@ class Api::V1::Users::RegistrationsController < Devise::RegistrationsController
   def respond_with(resource, _opts = {})
     if resource.persisted?
       render json: {
-        token: resource.generate_jwt,
+        token: request.env['warden-jwt_auth.token'], # Use devise-jwt token
         user: user_response(resource)
       }, status: :created
     else
