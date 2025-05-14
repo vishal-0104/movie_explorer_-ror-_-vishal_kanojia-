@@ -81,3 +81,4 @@ end
 
 gem 'cloudinary'
 gem 'image_processing', '~> 1.12'
+gem "simplecov", require: false, group: :test
