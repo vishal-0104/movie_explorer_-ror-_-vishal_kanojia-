@@ -46,7 +46,10 @@ class Movie < ApplicationRecord
 
   def poster_url
     return unless poster.attached?
-    if posterfts.rails_blob_url(poster, only_path: true)
+    if poster.service.is_a?(ActiveStorage::Service::CloudinaryService)
+      poster.url
+    else
+      Rails.application.routes.url_helpers.rails_blob_url(poster, only_path: true)
     end
   end
 
