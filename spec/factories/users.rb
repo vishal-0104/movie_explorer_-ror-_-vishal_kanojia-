@@ -8,7 +8,7 @@ FactoryBot.define do
     mobile_number { Faker::Number.number(digits: 10).to_s }
     role { :user }
     jti { SecureRandom.uuid }
-
+    device_token { 'token123' }
     # No subscription created here to let callback handle it
   end
 end

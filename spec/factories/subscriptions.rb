@@ -1,28 +1,28 @@
+# spec/factories/subscriptions.rb
 FactoryBot.define do
   factory :subscription do
-    user
+    user { create(:user) } # Ensure a unique user per subscription
     plan_type { 'free' }
     status { 'active' }
     start_date { Time.current }
-    end_date { plan_type == 'free' ? nil : 1.year.from_now }
-
-    stripe_customer_id { plan_type == 'free' ? nil : "cus_#{SecureRandom.hex(8)}" }
-    stripe_subscription_id { plan_type == 'free' ? nil : "sub_#{SecureRandom.hex(8)}" }
+    stripe_customer_id { nil }
+    stripe_subscription_id { nil }
+    end_date { nil }
 
     trait :premium_active do
       plan_type { 'premium' }
       status { 'active' }
-      end_date { 1.year.from_now }
-      stripe_customer_id { "cus_#{SecureRandom.hex(8)}" }
-      stripe_subscription_id { "sub_#{SecureRandom.hex(8)}" }
+      stripe_customer_id { 'cus_123' }
+      stripe_subscription_id { 'sub_123' }
+      end_date { 1.month.from_now }
     end
 
     trait :canceled_premium do
       plan_type { 'premium' }
       status { 'canceled' }
-      end_date { 1.month.ago }
-      stripe_customer_id { "cus_#{SecureRandom.hex(8)}" }
-      stripe_subscription_id { "sub_#{SecureRandom.hex(8)}" }
+      stripe_customer_id { 'cus_123' }
+      stripe_subscription_id { 'sub_123' }
+      end_date { 1.month.from_now }
     end
   end
 end

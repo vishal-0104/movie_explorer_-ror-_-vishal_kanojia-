@@ -58,7 +58,7 @@ class Api::V1::SubscriptionsController < ApplicationController
       Rails.logger.error "No pending subscription found for user #{@current_user.id}"
       return render json: { error: "No pending subscription found", errors: [ "Subscription is not pending" ] }, status: :bad_request
     end
-
+  
     payment_intent_id = params[:subscription]&.[](:payment_intent_id) || params[:payment_intent_id]
     Rails.logger.info "Payment intent ID: #{payment_intent_id}"
     begin
@@ -68,14 +68,14 @@ class Api::V1::SubscriptionsController < ApplicationController
         Rails.logger.error "Payment intent not succeeded: #{payment_intent.status}"
         return render json: { error: "Payment not completed", errors: [ "Payment intent has not succeeded" ] }, status: :bad_request
       end
-
+  
       subscription.update!(
         status: "active",
         stripe_subscription_id: payment_intent.id,
         end_date: Time.current + 1.month
       )
-      NotificationService.send_subscription_notification(@current_user, subscription) if @current_user.device_token
-
+      NotificationService.send_subscription_notification(@current_user, subscription.plan_type) if @current_user.device_token
+  
       render json: {
         plan: subscription.plan_type,
         status: subscription.status,
