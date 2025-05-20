@@ -27,7 +27,6 @@ class BlacklistedToken < ApplicationRecord
 
     user = User.find_by(id: user_id)
     if user
-      # Delegate to User.revoke_jwt for Devise compatibility
       User.revoke_jwt(payload, user)
     else
       Rails.logger.error "BlacklistedToken.revoke: User not found for user_id: #{user_id}"

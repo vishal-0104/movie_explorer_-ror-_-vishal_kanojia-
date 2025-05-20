@@ -25,7 +25,6 @@ class NotificationService
   def self.send_fcm_notification(tokens, title, body, data = {})
     return if tokens.empty?
 
-    # Filter out invalid tokens
     valid_tokens = tokens.select { |t| t&.match?(/\A[a-zA-Z0-9:_\-\.]{100,200}\z/) }
     invalid_tokens = tokens - valid_tokens
     invalid_tokens.each do |token|

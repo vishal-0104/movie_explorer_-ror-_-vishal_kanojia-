@@ -11,7 +11,7 @@ FactoryBot.define do
     description { 'A thief with the ability to enter dreams...' }
     premium { false }
 
-    # Attach dummy files for poster and banner
+
     after(:build) do |movie|
       movie.poster.attach(
         io: File.open(Rails.root.join('spec', 'fixtures', 'files', 'sample.jpg')),

@@ -9,9 +9,6 @@ class Movie < ApplicationRecord
   validates :poster, content_type: ['image/jpeg', 'image/png', 'image/gif']
   validates :banner, content_type: ['image/jpeg', 'image/png', 'image/gif']
 
-  after_commit :send_new_movie_notification, on: :create
-  after_commit :send_updated_movie_notification, on: :update
-  after_commit :send_deleted_movie_notification, on: :destroy
 
   def self.search_and_filter(params)
     movies = all
@@ -68,25 +65,5 @@ class Movie < ApplicationRecord
 
   def self.ransackable_associations(auth_object = nil)
     []
-  end
-
-  private
-
-  def send_new_movie_notification
-    NotificationService.send_new_movie_notification(self)
-  rescue StandardError => e
-    Rails.logger.error "[Movie] Failed to send new movie notification for movie #{id}: #{e.message}"
-  end
-
-  def send_updated_movie_notification
-    NotificationService.send_updated_movie_notification(self)
-  rescue StandardError => e
-    Rails.logger.error "[Movie] Failed to send updated movie notification for movie #{id}: #{e.message}"
-  end
-
-  def send_deleted_movie_notification
-    NotificationService.send_deleted_movie_notification(self)
-  rescue StandardError => e
-    Rails.logger.error "[Movie] Failed to send deleted movie notification for movie #{id}: #{e.message}"
   end
 end

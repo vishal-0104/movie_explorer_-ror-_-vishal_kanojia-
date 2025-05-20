@@ -61,20 +61,20 @@ RSpec.describe Movie, type: :model do
     end
 
     it 'filters by release_year' do
-      expect(Movie.search_and_filter(release_year: 2010)).to eq([movie1])
+      expect(Movie.search_and_filter(release_year: '2010')).to eq([movie1])
     end
 
     it 'filters by min_rating' do
-      expect(Movie.search_and_filter(min_rating: 8.0)).to match_array([movie1, movie2])
+      expect(Movie.search_and_filter(min_rating: '8.0')).to match_array([movie1, movie2])
     end
 
     it 'filters by premium' do
-      expect(Movie.search_and_filter(premium: true)).to eq([movie2])
+      expect(Movie.search_and_filter(premium: 'true')).to eq([movie2])
       expect(Movie.search_and_filter(premium: 'false')).to eq([movie1, movie3])
     end
 
     it 'combines multiple filters' do
-      expect(Movie.search_and_filter(genre: 'Sci-Fi', min_rating: 8.8)).to eq([movie1])
+      expect(Movie.search_and_filter(genre: 'Sci-Fi', min_rating: '8.8')).to eq([movie1])
     end
 
     it 'returns all movies when no filters are provided' do
@@ -85,7 +85,7 @@ RSpec.describe Movie, type: :model do
   describe '.create_movie' do
     let(:valid_params) do
       {
-        title: 'New Movie',
+        title: "New Movie #{SecureRandom.hex(4)}",
         genre: 'Action',
         release_year: 2023,
         rating: 7.5,
@@ -99,17 +99,20 @@ RSpec.describe Movie, type: :model do
         banner: Rack::Test::UploadedFile.new(Rails.root.join('spec/fixtures/files/sample.jpg'), 'image/jpeg')
       }
     end
-    
+
     let(:invalid_params) do
       valid_params.merge(title: nil)
     end
+
+    before { Movie.delete_all }
+    after { Movie.delete_all }
 
     it 'creates a movie with valid params and attaches poster and banner' do
       result = Movie.create_movie(valid_params)
       expect(result[:success]).to be true
       movie = result[:movie]
       expect(movie).to be_persisted
-      expect(movie.title).to eq('New Movie')
+      expect(movie.title).to start_with('New Movie')
       expect(movie.poster).to be_attached
       expect(movie.banner).to be_attached
     end
@@ -125,21 +128,24 @@ RSpec.describe Movie, type: :model do
     let(:movie) { create(:movie) }
     let(:update_params) do
       {
-        title: 'Updated Movie',
+        title: "Updated Movie #{SecureRandom.hex(4)}",
         poster: Rack::Test::UploadedFile.new(Rails.root.join('spec/fixtures/files/sample.jpg'), 'image/jpeg'),
         banner: Rack::Test::UploadedFile.new(Rails.root.join('spec/fixtures/files/sample.jpg'), 'image/jpeg')
       }
-    end    
+    end
 
     let(:invalid_params) do
       update_params.merge(rating: 11)
     end
 
+    before { Movie.delete_all }
+    after { Movie.delete_all }
+
     it 'updates a movie with valid params and attaches new poster and banner' do
       result = movie.update_movie(update_params)
       expect(result[:success]).to be true
       movie.reload
-      expect(movie.title).to eq('Updated Movie')
+      expect(movie.title).to start_with('Updated Movie')
       expect(movie.poster).to be_attached
       expect(movie.banner).to be_attached
     end
@@ -148,54 +154,6 @@ RSpec.describe Movie, type: :model do
       result = movie.update_movie(invalid_params)
       expect(result[:success]).to be false
       expect(result[:errors]).to include('Rating must be less than or equal to 10')
-    end
-  end
-
-  describe 'notifications' do
-    let(:movie) { build(:movie) }
-
-    before do
-      allow(NotificationService).to receive(:send_new_movie_notification)
-      allow(NotificationService).to receive(:send_updated_movie_notification)
-      allow(NotificationService).to receive(:send_deleted_movie_notification)
-      allow(Rails.logger).to receive(:error)
-    end
-
-    it 'sends new movie notification on create' do
-      movie.save!
-      expect(NotificationService).to have_received(:send_new_movie_notification).with(movie)
-    end
-
-    it 'sends updated movie notification on update' do
-      movie.save!
-      movie.update!(title: 'Updated Title')
-      expect(NotificationService).to have_received(:send_updated_movie_notification).with(movie)
-    end
-
-    it 'sends deleted movie notification on destroy' do
-      movie.save!
-      movie.destroy!
-      expect(NotificationService).to have_received(:send_deleted_movie_notification).with(movie)
-    end
-
-    it 'logs error but does not raise on new movie notification failure' do
-      allow(NotificationService).to receive(:send_new_movie_notification).and_raise(StandardError.new('Notification failed'))
-      expect { movie.save! }.not_to raise_error
-      expect(Rails.logger).to have_received(:error).with(/\[Movie\] Failed to send new movie notification for movie #{movie.id}: Notification failed/)
-    end
-
-    it 'logs error but does not raise on updated movie notification failure' do
-      movie.save!
-      allow(NotificationService).to receive(:send_updated_movie_notification).and_raise(StandardError.new('Notification failed'))
-      expect { movie.update!(title: 'Updated') }.not_to raise_error
-      expect(Rails.logger).to have_received(:error).with(/\[Movie\] Failed to send updated movie notification for movie #{movie.id}: Notification failed/)
-    end
-
-    it 'logs error but does not raise on deleted movie notification failure' do
-      movie.save!
-      allow(NotificationService).to receive(:send_deleted_movie_notification).and_raise(StandardError.new('Notification failed'))
-      expect { movie.destroy! }.not_to raise_error
-      expect(Rails.logger).to have_received(:error).with(/\[Movie\] Failed to send deleted movie notification for movie #{movie.id}: Notification failed/)
     end
   end
 

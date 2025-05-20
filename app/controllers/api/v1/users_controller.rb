@@ -5,7 +5,7 @@ class Api::V1::UsersController < ApplicationController
   def update_device_token
     device_token = params[:device_token]
 
-    # Validate device_token format
+
     unless device_token&.match?(/\A[a-zA-Z0-9:_\-\.]{100,200}\z/)
       Rails.logger.warn("Invalid device token received: #{device_token}")
       render json: { errors: [ "Device token is invalid. Must be a valid FCM registration token." ] }, status: :unprocessable_entity

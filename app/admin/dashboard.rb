@@ -1,20 +1,19 @@
-# frozen_string_literal: true
 ActiveAdmin.register_page "Dashboard" do
   menu priority: 1, label: proc { I18n.t("active_admin.dashboard") }
 
   content title: proc { I18n.t("active_admin.dashboard") } do
-    # Hero Section: Welcome Message with Cinematic Flair
+    
     div class: "hero-section", style: "background: linear-gradient(to right, #1a1a1a, #4a4a4a); color: white; padding: 40px; border-radius: 10px; text-align: center; margin-bottom: 20px;" do
       h1 "Welcome to Movie Explorer+ Admin Hub 🎬", style: "font-size: 2.5em; margin-bottom: 10px;"
       p "Lights, camera, action! Manage your cinematic universe with ease.", style: "font-size: 1.2em; opacity: 0.9;"
       small "Explore movies, users, subscriptions, and more from your director's chair.", style: "display: block; margin-top: 10px; color: #ddd;"
     end
 
-    # Columns Layout for Key Metrics and Panels
+    
     columns do
-      # Left Column: Recent Movies and Quick Stats
+      
       column do
-        # Recent Movies Panel
+        
         panel "🎥 Latest Blockbusters" do
           if Movie.any?
             ul do
@@ -38,7 +37,6 @@ ActiveAdmin.register_page "Dashboard" do
           end
         end
 
-        # Quick Stats Panel
         panel "📊 Cinema Stats" do
           div class: "stats-grid", style: "display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; text-align: center;" do
             div class: "stat-box", style: "background: #f0f0f0; padding: 15px; border-radius: 5px;" do
@@ -57,9 +55,9 @@ ActiveAdmin.register_page "Dashboard" do
         end
       end
 
-      # Right Column: User Activity and Subscription Insights
+      
       column do
-        # Recent Users Panel
+        
         panel "👥 Recent Users" do
           if User.any?
             table_for User.order(created_at: :desc).limit(5) do
@@ -76,7 +74,7 @@ ActiveAdmin.register_page "Dashboard" do
           end
         end
 
-        # Subscription Insights Panel
+        
         panel "💸 Subscription Insights" do
           div style: "margin-bottom: 15px;" do
             h4 "Subscription Breakdown", style: "margin: 0 0 10px;"
@@ -96,7 +94,7 @@ ActiveAdmin.register_page "Dashboard" do
       end
     end
 
-    # Footer Section: Quick Actions
+    
     div class: "quick-actions", style: "margin-top: 20px; padding: 20px; background: #f9f9f9; border-radius: 10px; text-align: center;" do
       h3 "Quick Actions 🎥", style: "margin-bottom: 15px;"
       div style: "display: flex; justify-content: center; gap: 15px;" do
@@ -105,5 +103,5 @@ ActiveAdmin.register_page "Dashboard" do
         link_to "View Reports", admin_dashboard_path, class: "button", style: "padding: 10px 20px; background: #ff9800; color: white; border-radius: 5px;"
       end
     end
-  end # content
+  end
 end

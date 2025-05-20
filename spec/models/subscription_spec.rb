@@ -1,215 +1,219 @@
 require 'rails_helper'
 
-RSpec.describe Movie, type: :model do
-  describe 'validations' do
-    it { should validate_presence_of(:title) }
-    it { should validate_presence_of(:genre) }
-    it { should validate_presence_of(:release_year) }
-    it { should validate_presence_of(:rating) }
-    it { should validate_presence_of(:director) }
-    it { should validate_presence_of(:duration) }
-    it { should validate_presence_of(:main_lead) }
-    it { should validate_presence_of(:streaming_platform) }
-    it { should validate_presence_of(:description) }
-
-    it { should validate_inclusion_of(:premium).in_array([true, false]) }
-
-    it { should validate_numericality_of(:rating).is_greater_than_or_equal_to(0).is_less_than_or_equal_to(10) }
-    it { should validate_numericality_of(:release_year).is_greater_than(1888).only_integer }
-
-    it 'validates poster content type' do
-      movie = build(:movie)
-      movie.poster.detach
-      movie.poster.attach(
-        io: StringIO.new('invalid content'),
-        filename: 'invalid.txt',
-        content_type: 'text/plain'
-      )
-      expect(movie).not_to be_valid
-      expect(movie.errors[:poster]).to include('has an invalid content type')
-    end
-
-    it 'validates banner content type' do
-      movie = build(:movie)
-      movie.banner.detach
-      movie.banner.attach(
-        io: StringIO.new('invalid content'),
-        filename: 'invalid.txt',
-        content_type: 'text/plain'
-      )
-      expect(movie).not_to be_valid
-      expect(movie.errors[:banner]).to include('has an invalid content type')
-    end
-  end
-
+RSpec.describe Subscription, type: :model do
   describe 'associations' do
-    it { should have_one_attached(:poster) }
-    it { should have_one_attached(:banner) }
+    it { should belong_to(:user) }
   end
 
-  describe '.search_and_filter' do
-    let!(:movie1) { create(:movie, title: 'Inception', genre: 'Sci-Fi', release_year: 2010, rating: 8.8, premium: false) }
-    let!(:movie2) { create(:movie, title: 'The Matrix', genre: 'Sci-Fi', release_year: 1999, rating: 8.7, premium: true) }
-    let!(:movie3) { create(:movie, title: 'Titanic', genre: 'Romance', release_year: 1997, rating: 7.8, premium: false) }
-
-    it 'filters by title' do
-      expect(Movie.search_and_filter(title: 'Incep')).to eq([movie1])
+  describe 'enums' do
+    it 'defines plan_type enum with correct values' do
+      expect(Subscription.plan_types).to eq(
+        'free' => 'free',
+        'basic' => 'basic',
+        'premium' => 'premium'
+      )
     end
 
-    it 'filters by genre' do
-      expect(Movie.search_and_filter(genre: 'Sci-Fi')).to match_array([movie1, movie2])
-    end
-
-    it 'filters by release_year' do
-      expect(Movie.search_and_filter(release_year: 2010)).to eq([movie1])
-    end
-
-    it 'filters by min_rating' do
-      expect(Movie.search_and_filter(min_rating: 8.0)).to match_array([movie1, movie2])
-    end
-
-    it 'filters by premium' do
-      expect(Movie.search_and_filter(premium: true)).to eq([movie2])
-      expect(Movie.search_and_filter(premium: 'false')).to eq([movie1, movie3])
-    end
-
-    it 'combines multiple filters' do
-      expect(Movie.search_and_filter(genre: 'Sci-Fi', min_rating: 8.8)).to eq([movie1])
-    end
-
-    it 'returns all movies when no filters are provided' do
-      expect(Movie.search_and_filter({})).to match_array([movie1, movie2, movie3])
+    it 'defines status enum with correct values' do
+      expect(Subscription.statuses).to eq(
+        'pending' => 'pending',
+        'active' => 'active',
+        'canceled' => 'canceled',
+        'past_due' => 'past_due'
+      )
     end
   end
 
-  describe '.create_movie' do
-    let(:valid_params) do
-      {
-        title: 'New Movie',
-        genre: 'Action',
-        release_year: 2023,
-        rating: 7.5,
-        director: 'John Doe',
-        duration: 120,
-        main_lead: 'Jane Doe',
-        streaming_platform: 'HBO',
-        description: 'An action-packed adventure...',
-        premium: true,
-        poster: Rack::Test::UploadedFile.new(StringIO.new('dummy image'), 'image/jpeg', original_filename: 'sample.jpg'),
-        banner: Rack::Test::UploadedFile.new(StringIO.new('dummy image'), 'image/jpeg', original_filename: 'sample.jpg')
-      }
+  describe 'validations' do
+    let(:user) { create(:user) }
+    subject { build(:subscription, user: user) }
+
+    it { should validate_presence_of(:plan_type) }
+    it { should validate_presence_of(:start_date) }
+
+    it 'validates plan_type inclusion' do
+      subscription = build(:subscription, user: user, plan_type: 'basic')
+      expect(subscription).to be_valid
+
+      inclusion_validator = Subscription.validators_on(:plan_type).find do |v|
+        v.is_a?(ActiveModel::Validations::InclusionValidator)
+      end
+      expect(inclusion_validator).to be_present, 'Inclusion validator for plan_type not found'
+      expect(inclusion_validator.options[:in]).to match_array(Subscription.plan_types.keys)
     end
 
-    let(:invalid_params) do
-      valid_params.merge(title: nil)
+    it 'validates status inclusion' do
+      subscription = build(:subscription, user: user, status: 'active')
+      expect(subscription).to be_valid
+
+      inclusion_validator = Subscription.validators_on(:status).find do |v|
+        v.is_a?(ActiveModel::Validations::InclusionValidator)
+      end
+      expect(inclusion_validator).to be_present, 'Inclusion validator for status not found'
+      expect(inclusion_validator.options[:in]).to match_array(Subscription.statuses.keys)
     end
 
-    it 'creates a movie with valid params and attaches poster and banner' do
-      result = Movie.create_movie(valid_params)
-      expect(result[:success]).to be true
-      movie = result[:movie]
-      expect(movie).to be_persisted
-      expect(movie.title).to eq('New Movie')
-      expect(movie.poster).to be_attached
-      expect(movie.banner).to be_attached
+    context 'when plan_type is not free and status is not pending' do
+      let(:subscription) do
+        build(:subscription, user: user, plan_type: 'basic', status: 'active', stripe_subscription_id: nil, stripe_customer_id: nil)
+      end
+
+      it 'requires stripe_subscription_id and stripe_customer_id' do
+        expect(subscription).to be_invalid
+        expect(subscription.errors[:stripe_subscription_id]).to include("can't be blank")
+        expect(subscription.errors[:stripe_customer_id]).to include("can't be blank")
+      end
     end
 
-    it 'returns errors for invalid params' do
-      result = Movie.create_movie(invalid_params)
-      expect(result[:success]).to be false
-      expect(result[:errors]).to include("Title can't be blank")
+    context 'when plan_type is free' do
+      let(:subscription) { build(:subscription, :free_plan, user: user) }
+
+      it 'does not require stripe_subscription_id or stripe_customer_id' do
+        expect(subscription).to be_valid
+      end
+
+      it 'does not require end_date' do
+        expect(subscription).to be_valid
+      end
+    end
+
+    context 'when status is pending' do
+      let(:subscription) { build(:subscription, :pending_plan, user: user) }
+
+      it 'does not require stripe_subscription_id or stripe_customer_id' do
+        expect(subscription).to be_valid
+      end
+    end
+
+    context 'when plan_type is not free' do
+      let(:subscription) { build(:subscription, user: user, plan_type: 'premium', end_date: nil) }
+
+      it 'requires end_date' do
+        expect(subscription).to be_invalid
+        expect(subscription.errors[:end_date]).to include("can't be blank")
+      end
     end
   end
 
-  describe '#update_movie' do
-    let(:movie) { create(:movie) }
-    let(:update_params) do
-      {
-        title: 'Updated Movie',
-        poster: Rack::Test::UploadedFile.new(StringIO.new('dummy image'), 'image/jpeg', original_filename: 'sample.jpg'),
-        banner: Rack::Test::UploadedFile.new(StringIO.new('dummy image'), 'image/jpeg', original_filename: 'sample.jpg')
-      }
+  describe '#active?' do
+    let(:user) { create(:user) }
+
+    it 'returns true for active subscription with future end_date' do
+      subscription = build(:subscription, user: user, status: 'active', end_date: 1.day.from_now)
+      expect(subscription.active?).to eq(true)
     end
 
-    let(:invalid_params) do
-      update_params.merge(rating: 11)
+    it 'returns false for canceled status' do
+      subscription = build(:subscription, user: user, status: 'canceled')
+      expect(subscription.active?).to eq(false)
     end
 
-    it 'updates a movie with valid params and attaches new poster and banner' do
-      result = movie.update_movie(update_params)
-      expect(result[:success]).to be true
-      movie.reload
-      expect(movie.title).to eq('Updated Movie')
-      expect(movie.poster).to be_attached
-      expect(movie.banner).to be_attached
+    it 'returns false if end_date is in the past' do
+      subscription = build(:subscription, user: user, status: 'active', end_date: 1.day.ago)
+      expect(subscription.active?).to eq(false)
     end
 
-    it 'returns errors for invalid params' do
-      result = movie.update_movie(invalid_params)
-      expect(result[:success]).to be false
-      expect(result[:errors]).to include('Rating must be less than or equal to 10')
+    it 'returns true if no end_date and status is active' do
+      subscription = build(:subscription, user: user, status: 'active', end_date: nil)
+      expect(subscription.active?).to eq(true)
     end
   end
 
-  describe 'notifications' do
-    let(:movie) { build(:movie) }
+  describe '#premium?' do
+    let(:user) { create(:user) }
 
-    before do
-      allow(NotificationService).to receive(:send_new_movie_notification)
-      allow(NotificationService).to receive(:send_updated_movie_notification)
-      allow(NotificationService).to receive(:send_deleted_movie_notification)
-      allow(Rails.logger).to receive(:error)
+    it 'returns true for basic plan' do
+      subscription = build(:subscription, user: user, plan_type: 'basic')
+      expect(subscription.premium?).to eq(true)
     end
 
-    it 'sends new movie notification on create' do
-      movie.save!
-      expect(NotificationService).to have_received(:send_new_movie_notification).with(movie)
+    it 'returns true for premium plan' do
+      subscription = build(:subscription, user: user, plan_type: 'premium')
+      expect(subscription.premium?).to eq(true)
     end
 
-    it 'sends updated movie notification on update' do
-      movie.save!
-      movie.update!(title: 'Updated Title')
-      expect(NotificationService).to have_received(:send_updated_movie_notification).with(movie)
+    it 'returns false for free plan' do
+      subscription = build(:subscription, user: user, plan_type: 'free')
+      expect(subscription.premium?).to eq(false)
+    end
+  end
+
+  describe 'after_update :send_notification' do
+    context 'when plan_type changes and is not free' do
+      let(:user) { create(:user, device_token: 'token123') }
+
+      before do
+        Subscription.where(user: user).destroy_all
+        @subscription = create(:subscription, :free_plan, user: user)
+      end
+
+      it 'does not call send_subscription_notification if conditions are not met' do
+        expect(NotificationService).not_to receive(:send_subscription_notification)
+
+        @subscription.update(plan_type: 'basic')
+      end
     end
 
-    it 'sends deleted movie notification on destroy' do
-      movie.save!
-      movie.destroy!
-      expect(NotificationService).to have_received(:send_deleted_movie_notification).with(movie)
+    context 'when status changes to canceled' do
+      let(:user) { create(:user, device_token: 'token123') }
+
+      before do
+        Subscription.where(user: user).destroy_all
+        @subscription = create(:subscription, user: user, status: 'active')
+      end
+
+      it 'calls send_payment_failure_notification' do
+        expect(NotificationService).to receive(:send_payment_failure_notification)
+          .with(user)
+
+        @subscription.update(status: 'canceled')
+      end
     end
 
-    it 'logs error but does not raise on new movie notification failure' do
-      allow(NotificationService).to receive(:send_new_movie_notification).and_raise(StandardError.new('Notification failed'))
-      expect { movie.save! }.not_to raise_error
-      expect(Rails.logger).to have_received(:error).with(/\[Movie\] Failed to send new movie notification for movie #{movie.id}: Notification failed/)
+    context 'when there is no significant change' do
+      let(:user) { create(:user, device_token: 'token123') }
+
+      before do
+        Subscription.where(user: user).destroy_all
+        @subscription = create(:subscription, user: user, plan_type: 'basic')
+      end
+
+      it 'does not call any notification service' do
+        expect(NotificationService).not_to receive(:send_subscription_notification)
+        expect(NotificationService).not_to receive(:send_payment_failure_notification)
+
+        @subscription.update(start_date: Time.current + 1.day)
+      end
     end
 
-    it 'logs error but does not raise on updated movie notification failure' do
-      movie.save!
-      allow(NotificationService).to receive(:send_updated_movie_notification).and_raise(StandardError.new('Notification failed'))
-      expect { movie.update!(title: 'Updated') }.not_to raise_error
-      expect(Rails.logger).to have_received(:error).with(/\[Movie\] Failed to send updated movie notification for movie #{movie.id}: Notification failed/)
-    end
+    context 'when device_token is not present' do
+      let(:user_without_token) { create(:user, device_token: nil) }
 
-    it 'logs error but does not raise on deleted movie notification failure' do
-      movie.save!
-      allow(NotificationService).to receive(:send_deleted_movie_notification).and_raise(StandardError.new('Notification failed'))
-      expect { movie.destroy! }.not_to raise_error
-      expect(Rails.logger).to have_received(:error).with(/\[Movie\] Failed to send deleted movie notification for movie #{movie.id}: Notification failed/)
+      before do
+        Subscription.where(user: user_without_token).destroy_all
+        @subscription = create(:subscription, user: user_without_token, status: 'active')
+      end
+
+      it 'does not send notification' do
+        expect(NotificationService).not_to receive(:send_payment_failure_notification)
+
+        @subscription.update(status: 'canceled')
+      end
     end
   end
 
   describe '.ransackable_attributes' do
-    it 'returns allowed searchable attributes' do
-      expect(Movie.ransackable_attributes).to match_array(
-        %w[title genre release_year rating director duration main_lead streaming_platform description premium created_at updated_at]
+    it 'returns list of ransackable attributes' do
+      expect(Subscription.ransackable_attributes).to include(
+        'id', 'user_id', 'plan_type', 'status', 'stripe_subscription_id',
+        'stripe_customer_id', 'start_date', 'end_date', 'created_at', 'updated_at'
       )
     end
   end
 
   describe '.ransackable_associations' do
-    it 'returns empty array' do
-      expect(Movie.ransackable_associations).to eq([])
+    it 'returns list of ransackable associations' do
+      expect(Subscription.ransackable_associations).to eq(['user'])
     end
   end
 end

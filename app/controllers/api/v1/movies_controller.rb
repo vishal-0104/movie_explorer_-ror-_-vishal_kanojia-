@@ -1,5 +1,5 @@
 class Api::V1::MoviesController < ApplicationController
-  before_action :authenticate_api_v1_user!, except: [ :index ] # Include show in authentication
+  before_action :authenticate_api_v1_user!, except: [ :index ]
   before_action :restrict_to_supervisor, only: [ :create, :update, :destroy ]
   skip_before_action :verify_authenticity_token
 
@@ -28,6 +28,7 @@ class Api::V1::MoviesController < ApplicationController
   def create
     result = Movie.create_movie(movie_params)
     if result[:success]
+      NotificationService.send_new_movie_notification(result[:movie])
       render json: result[:movie].as_json(methods: [ :poster_url, :banner_url ]), status: :created
     else
       render json: { errors: result[:errors] }, status: :unprocessable_entity
@@ -38,6 +39,7 @@ class Api::V1::MoviesController < ApplicationController
     movie = Movie.find(params[:id])
     result = movie.update_movie(movie_params)
     if result[:success]
+      NotificationService.send_updated_movie_notification(result[:movie])
       render json: result[:movie].as_json(methods: [ :poster_url, :banner_url ]), status: :ok
     else
       render json: { errors: result[:errors] }, status: :unprocessable_entity
@@ -50,8 +52,11 @@ class Api::V1::MoviesController < ApplicationController
     movie = Movie.find(params[:id])
     movie.destroy
     render json: { message: "Movie deleted successfully", id: movie.id }, status: :ok
-  rescue ActiveRecord::RecordNotFound
-    render json: { error: "Movie not found" }, status: :not_found
+  begin
+    NotificationService.send_deleted_movie_notification(movie)
+  rescue StandardError => e
+    Rails.logger.error("Failed to send delete notification: #{e.message}")
+  end
   end
 
   private

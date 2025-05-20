@@ -1,4 +1,3 @@
-# app/admin/movies.rb
 ActiveAdmin.register Movie do
   permit_params :title, :genre, :release_year, :rating, :director, :duration,
                 :main_lead, :streaming_platform, :description, :premium, :poster, :banner

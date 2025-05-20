@@ -16,9 +16,9 @@
 #
 require 'simplecov'
 SimpleCov.start 'rails' do
-  add_filter '/spec/' # Ignore spec files
-  add_filter '/config/' # Ignore config files
-  add_filter '/vendor/' # Ignore vendor files
+  add_filter '/spec/'
+  add_filter '/config/'
+  add_filter '/vendor/'
 end
 # See https://rubydoc.info/gems/rspec-core/RSpec/Core/Configuration
 RSpec.configure do |config|

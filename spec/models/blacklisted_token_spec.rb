@@ -39,8 +39,9 @@ RSpec.describe BlacklistedToken, type: :model do
 
   context 'when jti is not unique' do
     it 'is not valid' do
-      create(:blacklisted_token, jti: subject.jti)
+      create(:blacklisted_token, jti: subject.jti, user: user)
       expect(subject).to_not be_valid
+      expect(subject.errors[:jti]).to include('has already been taken')
     end
   end
 end

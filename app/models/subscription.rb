@@ -2,13 +2,13 @@ class Subscription < ApplicationRecord
   belongs_to :user
 
   enum plan_type: { free: 'free', basic: 'basic', premium: 'premium' }
-  enum status: { pending: 'pending', active: 'active', canceled: 'canceled', past_due: 'past_due' } # Added pending
+  enum status: { pending: 'pending', active: 'active', canceled: 'canceled', past_due: 'past_due' }
 
   validates :plan_type, presence: true, inclusion: { in: plan_types.keys }
   validates :status, presence: true, inclusion: { in: statuses.keys }
   validates :start_date, presence: true
-  validates :stripe_subscription_id, presence: true, unless: -> { plan_type == 'free' || status == 'pending' } # Relaxed for pending
-  validates :stripe_customer_id, presence: true, unless: -> { plan_type == 'free' || status == 'pending' } # Relaxed for pending
+  validates :stripe_subscription_id, presence: true, unless: -> { plan_type == 'free' || status == 'pending' }
+  validates :stripe_customer_id, presence: true, unless: -> { plan_type == 'free' || status == 'pending' }
   validates :end_date, presence: true, if: -> { plan_type != 'free' }
 
   after_update :send_notification, if: :significant_change?

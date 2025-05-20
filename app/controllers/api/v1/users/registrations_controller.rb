@@ -7,10 +7,9 @@ class Api::V1::Users::RegistrationsController < Devise::RegistrationsController
     resource.jti = SecureRandom.uuid
     resource.save
     if resource.persisted?
-      sign_in(resource_name, resource) # Sign in the user
-      # Manually generate JWT token
+      sign_in(resource_name, resource)
       token = Warden::JWTAuth::UserEncoder.new.call(resource, :user, nil)
-      request.env['warden-jwt_auth.token'] = token # Store token in env for response
+      request.env['warden-jwt_auth.token'] = token 
     end
     respond_with(resource)
   end
@@ -24,7 +23,7 @@ class Api::V1::Users::RegistrationsController < Devise::RegistrationsController
   def respond_with(resource, _opts = {})
     if resource.persisted?
       render json: {
-        token: request.env['warden-jwt_auth.token'], # Use devise-jwt token
+        token: request.env['warden-jwt_auth.token'],
         user: user_response(resource)
       }, status: :created
     else

@@ -23,7 +23,7 @@ class User < ApplicationRecord
   }
 
   def jwt_payload
-    { role: role, user_id: id, scp: 'api_v1_user' } # JTIMatcher adds jti
+    { role: role, user_id: id, scp: 'api_v1_user' }
   end
 
   def supervisor?
