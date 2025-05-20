@@ -1,21 +1,22 @@
 class Api::V1::SubscriptionsController < ApplicationController
-  before_action :authenticate_api_v1_user!, only: [ :create, :status, :confirm ]
-  skip_before_action :verify_authenticity_token, only: [ :create, :webhook, :confirm ]
-  skip_before_action :authenticate_api_v1_user!, only: [ :webhook ]
+  before_action :authenticate_api_v1_user!, only: [:create, :status, :confirm]
+  skip_before_action :verify_authenticity_token, only: [:create, :webhook, :confirm]
+  skip_before_action :authenticate_api_v1_user!, only: [:webhook]
 
   def create
     plan_id = params[:subscription]&.[](:plan_id) || params[:plan_id]
     unless Subscription.plan_types.key?(plan_id)
-      return render json: { error: "Invalid plan type", errors: [ "Plan '#{plan_id}' is not valid" ] }, status: :bad_request
+      return render json: { error: "Invalid plan type", errors: ["Plan '#{plan_id}' is not valid"] }, status: :bad_request
     end
 
     @current_user.subscription&.destroy
 
+    duration = plan_id == "basic" ? 7.days : 1.month
     subscription = @current_user.build_subscription(
       plan_type: plan_id,
       status: plan_id == "free" ? "active" : "pending",
       start_date: Time.current,
-      end_date: Time.current + 1.month
+      end_date: Time.current + duration
     )
 
     if plan_id == "free"
@@ -30,9 +31,9 @@ class Api::V1::SubscriptionsController < ApplicationController
 
       payment_intent = Stripe::PaymentIntent.create(
         customer: customer.id,
-        amount: plan_id == "basic" ? 9.99 : 14.99,
+        amount: calculate_amount(plan_id), 
         currency: "usd",
-        payment_method_types: [ "card" ],
+        payment_method_types: ["card"],
         metadata: { user_id: @current_user.id, plan_id: plan_id }
       )
 
@@ -43,19 +44,18 @@ class Api::V1::SubscriptionsController < ApplicationController
       }, status: :ok
     rescue Stripe::StripeError => e
       Rails.logger.error "Stripe error: #{e.message}"
-      render json: { error: "Payment intent creation failed", errors: [ e.message ] }, status: :unprocessable_entity
+      render json: { error: "Payment intent creation failed", errors: [e.message] }, status: :unprocessable_entity
     end
   end
-
 
   def confirm
     subscription = @current_user.subscription
     Rails.logger.info "Subscription: #{subscription&.inspect}"
     unless subscription&.pending?
       Rails.logger.error "No pending subscription found for user #{@current_user.id}"
-      return render json: { error: "No pending subscription found", errors: [ "Subscription is not pending" ] }, status: :bad_request
+      return render json: { error: "No pending subscription found", errors: ["Subscription is not pending"] }, status: :bad_request
     end
-  
+
     payment_intent_id = params[:subscription]&.[](:payment_intent_id) || params[:payment_intent_id]
     Rails.logger.info "Payment intent ID: #{payment_intent_id}"
     begin
@@ -63,16 +63,18 @@ class Api::V1::SubscriptionsController < ApplicationController
       Rails.logger.info "Payment intent status: #{payment_intent.status}, customer: #{payment_intent.customer}"
       unless payment_intent.status == "succeeded"
         Rails.logger.error "Payment intent not succeeded: #{payment_intent.status}"
-        return render json: { error: "Payment not completed", errors: [ "Payment intent has not succeeded" ] }, status: :bad_request
+        return render json: { error: "Payment not completed", errors: ["Payment intent has not succeeded"] }, status: :bad_request
       end
-  
+
+
+      duration = subscription.plan_type == "basic" ? 7.days : 1.month
       subscription.update!(
         status: "active",
         stripe_subscription_id: payment_intent.id,
-        end_date: Time.current + 1.month
+        end_date: Time.current + duration
       )
       NotificationService.send_subscription_notification(@current_user, subscription.plan_type) if @current_user.device_token
-  
+
       render json: {
         plan: subscription.plan_type,
         status: subscription.status,
@@ -80,14 +82,14 @@ class Api::V1::SubscriptionsController < ApplicationController
       }, status: :ok
     rescue Stripe::StripeError => e
       Rails.logger.error "Stripe error: #{e.message}"
-      render json: { error: "Payment confirmation failed", errors: [ e.message ] }, status: :unprocessable_entity
+      render json: { error: "Payment confirmation failed", errors: [e.message] }, status: :unprocessable_entity
     end
   end
 
   def status
     subscription = @current_user.subscription
     unless subscription
-      return render json: { error: "No active subscription found", errors: [ "User has no subscription" ] }, status: :not_found
+      return render json: { error: "No active subscription found", errors: ["User has no subscription"] }, status: :not_found
     end
 
     render json: {
@@ -106,7 +108,7 @@ class Api::V1::SubscriptionsController < ApplicationController
       event = Stripe::Webhook.construct_event(payload, sig_header, endpoint_secret)
     rescue JSON::ParserError, Stripe::SignatureVerificationError => e
       Rails.logger.error("Webhook error: #{e.message}")
-      return render json: { error: "Invalid webhook", errors: [ e.message ] }, status: :bad_request
+      return render json: { error: "Invalid webhook", errors: [e.message] }, status: :bad_request
     end
 
     case event.type
@@ -134,10 +136,9 @@ class Api::V1::SubscriptionsController < ApplicationController
   end
 
   def calculate_amount(plan_id)
-
     case plan_id
-    when "basic" then 999 
-    when "premium" then 1999
+    when "basic" then 999
+    when "premium" then 1499
     else raise "Invalid plan"
     end
   end
@@ -149,9 +150,11 @@ class Api::V1::SubscriptionsController < ApplicationController
     subscription = user.subscription
     return unless subscription.status == "pending"
 
+    duration = subscription.plan_type == "basic" ? 7.days : 1.month
     subscription.update!(
       status: "active",
-      stripe_subscription_id: payment_intent.id
+      stripe_subscription_id: payment_intent.id,
+      end_date: Time.current + duration
     )
     NotificationService.send_subscription_notification(user, subscription.plan_type)
   rescue => e
