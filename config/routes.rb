@@ -24,6 +24,8 @@ Rails.application.routes.draw do
       post 'webhooks/stripe', to: 'subscriptions#webhook'
 
       patch 'users/update_device_token', to: 'users#update_device_token'
+      patch 'users/update_profile_picture', to: 'users#update_profile_picture'
+      get 'users/show_profile_picture', to: 'users#show_profile_picture'
     end
   end
 end

@@ -269,22 +269,6 @@ components:
           example: success
       required:
         - status
-    Error:
-      type: object
-      properties:
-        error:
-          type: string
-          description: A brief error message
-          example: Invalid request
-        errors:
-          type: array
-          items:
-            type: string
-          description: Detailed error messages
-          example: ["Plan ID is invalid"]
-      required:
-        - error
-        - errors
     DeviceTokenResponse:
       type: object
       properties:
@@ -304,6 +288,47 @@ components:
       required:
         - message
         - jti
+    ProfilePictureResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Confirmation message for profile picture update
+          example: Profile picture updated
+        profile_picture_url:
+          type: string
+          nullable: true
+          description: URL of the uploaded profile picture
+          example: http://localhost:3000/rails/active_storage/blobs/.../profile.jpg
+      required:
+        - message
+        - profile_picture_url
+    ProfilePictureShowResponse:
+      type: object
+      properties:
+        profile_picture_url:
+          type: string
+          nullable: true
+          description: URL of the user’s profile picture
+          example: http://localhost:3000/rails/active_storage/blobs/.../profile.jpg
+      required:
+        - profile_picture_url
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: A brief error message
+          example: Invalid request
+        errors:
+          type: array
+          items:
+            type: string
+          description: Detailed error messages
+          example: ["Profile picture is required"]
+      required:
+        - error
+        - errors
 security:
   - Bearer: []
 paths:
@@ -463,45 +488,6 @@ paths:
                 errors:
                   - Email has already been taken
                   - Password is too short
-  /api/v1/users/me:
-    get:
-      summary: Get current user details
-      tags:
-        - Users
-      description: Returns the authenticated user’s details, including profile picture URL. Requires a valid JWT token. Rate limited to 20 requests per minute per user.
-      security:
-        - Bearer: []
-      responses:
-        "200":
-          description: User details retrieved successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  user:
-                    $ref: "#/components/schemas/User"
-              example:
-                user:
-                  id: 1
-                  email: user@example.com
-                  first_name: John
-                  last_name: Doe
-                  mobile_number: +1234567890
-                  role: user
-                  created_at: "2025-05-21T17:01:00Z"
-                  updated_at: "2025-05-21T17:01:00Z"
-                  profile_picture_url: null
-        "401":
-          description: Unauthorized (invalid or missing token)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-              example:
-                error: Unauthorized
-                errors:
-                  - Invalid or missing token
   /api/v1/users/update_device_token:
     patch:
       summary: Update FCM device token
@@ -540,6 +526,95 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/users/update_profile_picture:
+    patch:
+      summary: Update user profile picture
+      tags:
+        - Users
+      description: Updates the authenticated user’s profile picture. Accepts a PNG or JPEG image (max 5MB). Requires a valid JWT token. Rate limited to 5 requests per minute per user.
+      security:
+        - Bearer: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                profile_picture:
+                  type: string
+                  format: binary
+                  description: Profile picture image (PNG or JPEG, max 5MB)
+              required:
+                - profile_picture
+      responses:
+        "200":
+          description: Profile picture updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfilePictureResponse"
+              example:
+                message: Profile picture updated
+                profile_picture_url: http://localhost:3000/rails/active_storage/blobs/.../profile.jpg
+        "401":
+          description: Unauthorized (invalid or missing token)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: Unauthorized
+                errors:
+                  - Invalid or missing token
+        "422":
+          description: Unprocessable Entity (e.g., invalid file type, file too large, or missing file)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: Unprocessable Entity
+                errors:
+                  - Profile picture content type is invalid
+                  - Profile picture is required
+  /api/v1/users/show_profile_picture:
+    get:
+      summary: Get user profile picture
+      tags:
+        - Users
+      description: Retrieves the URL of the authenticated user’s profile picture. Requires a valid JWT token. Rate limited to 20 requests per minute per user.
+      security:
+        - Bearer: []
+      responses:
+        "200":
+          description: Profile picture URL retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfilePictureShowResponse"
+              example:
+                profile_picture_url: http://localhost:3000/rails/active_storage/blobs/.../profile.jpg
+        "401":
+          description: Unauthorized (invalid or missing token)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: Unauthorized
+                errors:
+                  - Invalid or missing token
+        "404":
+          description: No profile picture found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: Not Found
+                errors:
+                  - No profile picture found
   /api/v1/movies:
     get:
       summary: List movies
