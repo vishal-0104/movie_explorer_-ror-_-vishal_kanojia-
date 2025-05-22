@@ -25,7 +25,8 @@ class NotificationService
   def self.send_fcm_notification(tokens, title, body, data = {})
     return if tokens.empty?
 
-    valid_tokens = tokens.select { |t| t&.match?(/\A[a-zA-Z0-9:_\-\.]{100,200}\z/) }
+    # Deduplicate tokens to prevent multiple notifications to the same user
+    valid_tokens = tokens.uniq.select { |t| t&.match?(/\A[a-zA-Z0-9:_\-\.]{100,200}\z/) }
     invalid_tokens = tokens - valid_tokens
     invalid_tokens.each do |token|
       Rails.logger.warn("Skipping invalid FCM token: #{token}")
@@ -89,7 +90,11 @@ class NotificationService
   def self.send_subscription_notification(user, plan_type)
     return unless user.device_token
 
-    send_fcm_notification(
+    # Check if notification was already sent
+    cache_key = "subscription_notification_#{user.id}_#{user.subscription&.stripe_subscription_id}"
+    return if Rails.cache.exist?(cache_key)
+
+    response = send_fcm_notification(
       [user.device_token],
       "Subscription Activated!",
       "Your #{plan_type.capitalize} subscription has been successfully activated.",
@@ -99,12 +104,19 @@ class NotificationService
         action: "subscription_activated"
       }
     )
+
+    # Cache the notification to prevent duplicates
+    Rails.cache.write(cache_key, true, expires_in: 1.hour) if response&.any?(&:success?)
   end
 
   def self.send_payment_failure_notification(user)
     return unless user.device_token
 
-    send_fcm_notification(
+    # Use a unique cache key for deduplication
+    cache_key = "payment_failure_notification_#{user.id}_#{Time.current.to_i}"
+    return if Rails.cache.exist?(cache_key)
+
+    response = send_fcm_notification(
       [user.device_token],
       "Payment Failed",
       "There was an issue with your subscription payment. Please update your payment method.",
@@ -113,12 +125,19 @@ class NotificationService
         action: "payment_failed"
       }
     )
+
+    # Cache the notification to prevent duplicates
+    Rails.cache.write(cache_key, true, expires_in: 1.hour) if response&.any?(&:success?)
   end
 
   def self.send_cancellation_notification(user)
     return unless user.device_token
 
-    send_fcm_notification(
+    # Use a unique cache key for deduplication
+    cache_key = "cancellation_notification_#{user.id}_#{Time.current.to_i}"
+    return if Rails.cache.exist?(cache_key)
+
+    response = send_fcm_notification(
       [user.device_token],
       "Subscription Canceled",
       "Your subscription has been canceled. You are now on the free plan.",
@@ -127,13 +146,16 @@ class NotificationService
         action: "subscription_canceled"
       }
     )
+
+    # Cache the notification to prevent duplicates
+    Rails.cache.write(cache_key, true, expires_in: 1.hour) if response&.any?(&:success?)
   end
 
   private
 
   def self.send_movie_notification(movie, title_prefix, body_action)
     users = movie.premium? ? User.with_active_subscription : User.all
-    device_tokens = users.where.not(device_token: nil).pluck(:device_token)
+    device_tokens = users.where.not(device_token: nil).pluck(:device_token).uniq
 
     return if device_tokens.empty?
 
