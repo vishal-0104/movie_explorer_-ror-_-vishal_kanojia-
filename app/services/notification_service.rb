@@ -99,7 +99,8 @@ class NotificationService
       {
         plan_type: plan_type,
         subscription_id: user.subscription&.stripe_subscription_id,
-        action: "subscription_activated"
+        action: "subscription_activated",
+        notification_type: "subscription"
       }
     )
 
@@ -118,7 +119,8 @@ class NotificationService
       "There was an issue with your subscription payment. Please update your payment method.",
       {
         type: "payment_failure",
-        action: "payment_failed"
+        action: "payment_failed",
+        notification_type: "payment"
       }
     )
 
@@ -133,11 +135,12 @@ class NotificationService
 
     response = send_fcm_notification(
       [user.device_token],
-      "Subscription Canceled",
-      "Your subscription has been canceled. You are now on the free plan.",
+      "Subscription Cancelled",
+      "Your subscription has been cancelled. You are now on the free plan.",
       {
         type: "subscription_cancellation",
-        action: "subscription_cancelled"
+        action: "subscription_cancelled",
+        notification_type: "subscription"
       }
     )
 
@@ -156,11 +159,17 @@ class NotificationService
     movie_url = "#{base_url}/movies/#{movie.id}"
 
     device_tokens.each_slice(500) do |token_batch|
-      token_batch.each do |token|
-        cache_key = "movie_notification_#{movie.id}_#{title_prefix.downcase.gsub(' ', '_')}_#{token}"
-        next if Rails.cache.exist?(cache_key)
+      valid_tokens = token_batch.reject do |token|
+        cache_key = "movie_notification_#{movie.id}_#{title_prefix.downcase.gsub(' ', '_')}_#{Digest::SHA256.hexdigest(token)}"
+        Rails.cache.exist?(cache_key)
+      end
 
-        send_fcm_notification(
+      next if valid_tokens.empty?
+
+      valid_tokens.each do |token|
+        cache_key = "movie_notification_#{movie.id}_#{title_prefix.downcase.gsub(' ', '_')}_#{Digest::SHA256.hexdigest(token)}"
+
+        response = send_fcm_notification(
           [token],
           "#{title_prefix}",
           "#{movie.title} #{body_action}#{movie.premium? ? ' for premium users' : ''}!",
@@ -169,11 +178,12 @@ class NotificationService
             title: movie.title,
             premium: movie.premium.to_s,
             action: title_prefix.downcase.gsub(" ", "_"),
-            redirect_url: movie_url
+            notification_type: "movie",
+            url: movie_url
           }
         )
 
-        Rails.cache.write(cache_key, true, expires_in: 1.hour)
+        Rails.cache.write(cache_key, true, expires_in: 1.hour) if response&.any?(&:success?)
       end
     end
   end
