@@ -2,7 +2,7 @@ class Subscription < ApplicationRecord
   belongs_to :user
 
   enum plan_type: { free: 'free', basic: 'basic', premium: 'premium' }
-  enum status: { pending: 'pending', active: 'active', canceled: 'canceled', past_due: 'past_due' }
+  enum status: { pending: 'pending', active: 'active', cancelled: 'cancelled', past_due: 'past_due' }
 
   validates :plan_type, presence: true, inclusion: { in: plan_types.keys }
   validates :status, presence: true, inclusion: { in: statuses.keys }
@@ -40,7 +40,7 @@ class Subscription < ApplicationRecord
 
     if saved_change_to_plan_type? && plan_type != 'free'
       NotificationService.send_subscription_notification(user, plan_type)
-    elsif saved_change_to_status? && status.in?(['canceled', 'past_due'])
+    elsif saved_change_to_status? && status.in?(['cancelled', 'past_due'])
       NotificationService.send_payment_failure_notification(user)
     end
   rescue StandardError => e
