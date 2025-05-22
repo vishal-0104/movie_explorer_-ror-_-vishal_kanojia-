@@ -70,12 +70,11 @@ class Api::V1::SubscriptionsController < ApplicationController
 
     begin
       if subscription.stripe_subscription_id && subscription.plan_type != "free"
-        Rails.logger.info "Canceling subscription with PaymentIntent ID: #{subscription.stripe_subscription_id}"
+        Rails.logger.info "Cancelling subscription with PaymentIntent ID: #{subscription.stripe_subscription_id}"
       end
 
-      subscription.update!(status: "canceled")
+      subscription.update!(status: "cancelled")
 
-      # Send cancellation notification with deduplication
       cache_key = "cancellation_notification_#{@current_user.id}_#{Time.current.to_i}"
       unless Rails.cache.exist?(cache_key)
         NotificationService.send_cancellation_notification(@current_user) if @current_user.device_token
@@ -83,7 +82,7 @@ class Api::V1::SubscriptionsController < ApplicationController
       end
 
       render json: {
-        message: "Subscription canceled successfully. You will revert to the free plan after #{subscription.end_date}.",
+        message: "Subscription cancelled successfully. You will be revert to the free plan after #{subscription.end_date}.",
         plan: subscription.plan_type,
         status: subscription.status,
         current_period_end: subscription.end_date
@@ -145,11 +144,10 @@ class Api::V1::SubscriptionsController < ApplicationController
       }, status: :ok
     end
 
-    if subscription.status == "canceled" && subscription.end_date && Time.current > subscription.end_date
+    if subscription.status == "cancelled" && subscription.end_date && Time.current > subscription.end_date
       subscription.destroy
       create_free_subscription
       subscription = @current_user.subscription
-      # Send cancellation notification with deduplication
       cache_key = "cancellation_notification_#{@current_user.id}_#{Time.current.to_i}"
       unless Rails.cache.exist?(cache_key)
         NotificationService.send_cancellation_notification(@current_user) if @current_user.device_token
@@ -176,14 +174,12 @@ class Api::V1::SubscriptionsController < ApplicationController
       return render json: { error: "Invalid webhook", errors: [e.message] }, status: :bad_request
     end
 
-    # Check if event was already processed using cache
     cache_key = "stripe_webhook_#{event.id}"
     if Rails.cache.exist?(cache_key)
       Rails.logger.info("Webhook event #{event.id} already processed")
       return render json: { status: "success" }, status: :ok
     end
 
-    # Process the event
     case event.type
     when "payment_intent.succeeded"
       handle_payment_intent_succeeded(event.data.object)
@@ -195,7 +191,6 @@ class Api::V1::SubscriptionsController < ApplicationController
       Rails.logger.info("Unhandled event type: #{event.type}")
     end
 
-    # Mark event as processed
     Rails.cache.write(cache_key, true, expires_in: 24.hours)
 
     render json: { status: "success" }, status: :ok
@@ -233,7 +228,6 @@ class Api::V1::SubscriptionsController < ApplicationController
       end_date: Time.current + duration
     )
 
-    # Send subscription notification with deduplication
     cache_key = "subscription_notification_#{user.id}_#{payment_intent.id}"
     unless Rails.cache.exist?(cache_key)
       NotificationService.send_subscription_notification(user, subscription.plan_type) if user.device_token
@@ -250,7 +244,6 @@ class Api::V1::SubscriptionsController < ApplicationController
     subscription = user.subscription
     subscription.update!(status: "past_due")
 
-    # Send payment failure notification with deduplication
     cache_key = "payment_failure_notification_#{user.id}_#{Time.current.to_i}"
     unless Rails.cache.exist?(cache_key)
       NotificationService.send_payment_failure_notification(user) if user.device_token
@@ -267,7 +260,6 @@ class Api::V1::SubscriptionsController < ApplicationController
 
     user.subscription.update!(status: "past_due")
 
-    # Send payment failure notification with deduplication
     cache_key = "payment_failure_notification_#{user.id}_#{Time.current.to_i}"
     unless Rails.cache.exist?(cache_key)
       NotificationService.send_payment_failure_notification(user) if user.device_token

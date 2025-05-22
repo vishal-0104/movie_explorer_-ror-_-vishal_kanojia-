@@ -25,7 +25,6 @@ class NotificationService
   def self.send_fcm_notification(tokens, title, body, data = {})
     return if tokens.empty?
 
-    # Deduplicate tokens to prevent multiple notifications to the same user
     valid_tokens = tokens.uniq.select { |t| t&.match?(/\A[a-zA-Z0-9:_\-\.]{100,200}\z/) }
     invalid_tokens = tokens - valid_tokens
     invalid_tokens.each do |token|
@@ -90,7 +89,6 @@ class NotificationService
   def self.send_subscription_notification(user, plan_type)
     return unless user.device_token
 
-    # Check if notification was already sent
     cache_key = "subscription_notification_#{user.id}_#{user.subscription&.stripe_subscription_id}"
     return if Rails.cache.exist?(cache_key)
 
@@ -105,14 +103,12 @@ class NotificationService
       }
     )
 
-    # Cache the notification to prevent duplicates
     Rails.cache.write(cache_key, true, expires_in: 1.hour) if response&.any?(&:success?)
   end
 
   def self.send_payment_failure_notification(user)
     return unless user.device_token
 
-    # Use a unique cache key for deduplication
     cache_key = "payment_failure_notification_#{user.id}_#{Time.current.to_i}"
     return if Rails.cache.exist?(cache_key)
 
@@ -126,14 +122,12 @@ class NotificationService
       }
     )
 
-    # Cache the notification to prevent duplicates
     Rails.cache.write(cache_key, true, expires_in: 1.hour) if response&.any?(&:success?)
   end
 
   def self.send_cancellation_notification(user)
     return unless user.device_token
 
-    # Use a unique cache key for deduplication
     cache_key = "cancellation_notification_#{user.id}_#{Time.current.to_i}"
     return if Rails.cache.exist?(cache_key)
 
@@ -143,11 +137,10 @@ class NotificationService
       "Your subscription has been canceled. You are now on the free plan.",
       {
         type: "subscription_cancellation",
-        action: "subscription_canceled"
+        action: "subscription_cancelled"
       }
     )
 
-    # Cache the notification to prevent duplicates
     Rails.cache.write(cache_key, true, expires_in: 1.hour) if response&.any?(&:success?)
   end
 
@@ -159,18 +152,29 @@ class NotificationService
 
     return if device_tokens.empty?
 
+    base_url = ENV['APP_BASE_URL']
+    movie_url = "#{base_url}/movies/#{movie.id}"
+
     device_tokens.each_slice(500) do |token_batch|
-      send_fcm_notification(
-        token_batch,
-        "#{title_prefix}",
-        "#{movie.title} #{body_action}#{movie.premium? ? ' for premium users' : ''}!",
-        {
-          movie_id: movie.id.to_s,
-          title: movie.title,
-          premium: movie.premium.to_s,
-          action: title_prefix.downcase.gsub(" ", "_")
-        }
-      )
+      token_batch.each do |token|
+        cache_key = "movie_notification_#{movie.id}_#{title_prefix.downcase.gsub(' ', '_')}_#{token}"
+        next if Rails.cache.exist?(cache_key)
+
+        send_fcm_notification(
+          [token],
+          "#{title_prefix}",
+          "#{movie.title} #{body_action}#{movie.premium? ? ' for premium users' : ''}!",
+          {
+            movie_id: movie.id.to_s,
+            title: movie.title,
+            premium: movie.premium.to_s,
+            action: title_prefix.downcase.gsub(" ", "_"),
+            redirect_url: movie_url
+          }
+        )
+
+        Rails.cache.write(cache_key, true, expires_in: 1.hour)
+      end
     end
   end
 
