@@ -20,22 +20,26 @@ class Api::V1::UsersController < ApplicationController
   end
 
   def update_profile_picture
-    if params[:profile_picture].blank?
-      render json: { errors: ["Profile picture is required"] }, status: :unprocessable_entity
-      return
-    end
+  if params[:profile_picture].blank?
+    render json: { errors: ["Profile picture is required"] }, status: :unprocessable_entity
+    return
+  end
 
-    begin
-      @current_user.profile_picture.attach(params[:profile_picture])
+  begin
+    @current_user.profile_picture.attach(params[:profile_picture])
+    if @current_user.save
       if @current_user.profile_picture.attached?
         render json: { message: "Profile picture updated", profile_picture_url: url_for(@current_user.profile_picture) }, status: :ok
       else
         render json: { errors: @current_user.errors.full_messages }, status: :unprocessable_entity
       end
-    rescue ActiveStorage::FileNotFoundError, ActiveStorage::IntegrityError => e
-      Rails.logger.error("Profile picture upload failed: #{e.message}")
-      render json: { errors: ["Failed to process profile picture. Ensure it's a valid image file."] }, status: :unprocessable_entity
+    else
+      render json: { errors: @current_user.errors.full_messages }, status: :unprocessable_entity
     end
+  rescue ActiveStorage::FileNotFoundError, ActiveStorage::IntegrityError => e
+    Rails.logger.error("Profile picture upload failed: #{e.message}")
+    render json: { errors: ["Failed to process profile picture. Ensure it's a valid image file."] }, status: :unprocessable_entity
+  end
   end
 
   def show_profile_picture
