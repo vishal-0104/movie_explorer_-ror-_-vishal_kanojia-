@@ -11,8 +11,10 @@ class User < ApplicationRecord
   validates :mobile_number, presence: true, uniqueness: true, format: { with: /\A(\+?[1-9]\d{0,3})?\d{9,14}\z/ }
   validates :device_token, uniqueness: true, allow_nil: true
   validates :jti, presence: true, uniqueness: true
+  validates :profile_picture, content_type: ['image/png', 'image/jpeg'], size: { less_than: 5.megabytes }, allow_nil: true
   before_save { self.email = email.downcase }
 
+  has_one_attached :profile_picture
   has_one :subscription, dependent: :destroy
   after_create :create_default_subscription
 

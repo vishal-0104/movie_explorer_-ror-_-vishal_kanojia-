@@ -115,6 +115,20 @@ class NotificationService
     )
   end
 
+  def self.send_cancellation_notification(user)
+    return unless user.device_token
+
+    send_fcm_notification(
+      [user.device_token],
+      "Subscription Canceled",
+      "Your subscription has been canceled. You are now on the free plan.",
+      {
+        type: "subscription_cancellation",
+        action: "subscription_canceled"
+      }
+    )
+  end
+
   private
 
   def self.send_movie_notification(movie, title_prefix, body_action)

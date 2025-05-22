@@ -121,9 +121,15 @@ components:
         created_at:
           type: string
           format: date-time
+          description: ISO 8601 formatted timestamp
         updated_at:
           type: string
           format: date-time
+          description: ISO 8601 formatted timestamp
+        profile_picture_url:
+          type: string
+          nullable: true
+          description: Cloudinary URL for the user’s profile picture (resized to 200x200)
       required:
         - id
         - email
@@ -165,14 +171,14 @@ components:
         status:
           type: string
           enum: [pending, active, canceled, past_due]
-          description: Memoria status of the subscription
+          description: Status of the subscription
           example: active
         current_period_end:
           type: string
           format: date-time
           nullable: true
-          description: The end date of the current billing period (null for free plans)
-          example: '2025-12-31T23:59:59Z'
+          description: ISO 8601 formatted timestamp; end date of the current billing period (null for free plans)
+          example: "2025-12-31T23:59:59Z"
       required:
         - plan
         - status
@@ -221,8 +227,8 @@ components:
           type: string
           format: date-time
           nullable: true
-          description: The end date of the current billing period
-          example: '2025-12-31T23:59:59Z'
+          description: ISO 8601 formatted timestamp; end date of the current billing period
+          example: "2025-12-31T23:59:59Z"
       required:
         - plan
         - status
@@ -232,14 +238,27 @@ components:
         message:
           type: string
           description: Confirmation message for cancellation
-          example: Subscription canceled successfully
-        subscription_id:
+          example: Subscription canceled successfully. You will revert to the free plan after 2025-12-31T23:59:59Z.
+        plan:
           type: string
-          description: The ID of the canceled subscription
-          example: sub_12345
+          enum: [free, basic, premium]
+          description: The current subscription plan
+          example: premium
+        status:
+          type: string
+          enum: [pending, active, canceled, past_due]
+          description: Status of the subscription
+          example: canceled
+        current_period_end:
+          type: string
+          format: date-time
+          nullable: true
+          description: ISO 8601 formatted timestamp; end date of the current billing period (null for free plans)
+          example: "2025-12-31T23:59:59Z"
       required:
         - message
-        - subscription_id
+        - plan
+        - status
     WebhookResponse:
       type: object
       properties:
@@ -262,7 +281,7 @@ components:
           items:
             type: string
           description: Detailed error messages
-          example: ['Plan ID is invalid']
+          example: ["Plan ID is invalid"]
       required:
         - error
         - errors
@@ -309,18 +328,30 @@ paths:
                 - email
                 - password
       responses:
-        '200':
+        "200":
           description: Successful login
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AuthResponse'
-        '401':
+                $ref: "#/components/schemas/AuthResponse"
+              example:
+                token: eyJhbGciOiJIUzI1NiJ9...
+                user:
+                  id: 1
+                  email: user@example.com
+                  first_name: John
+                  last_name: Doe
+                  mobile_number: +1234567890
+                  role: user
+                  created_at: "2025-05-21T17:01:00Z"
+                  updated_at: "2025-05-21T17:01:00Z"
+                  profile_picture_url: null
+        "401":
           description: Invalid email or password
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
   /api/v1/users/sign_out:
     delete:
       summary: User logout
@@ -330,13 +361,13 @@ paths:
       security:
         - Bearer: []
       responses:
-        '200':
+        "200":
           description: Successful sign-out
           headers:
             X-Revoked:
               schema:
                 type: string
-                enum: ['true']
+                enum: ["true"]
               description: Indicates the token was successfully revoked
             X-JTI:
               schema:
@@ -345,25 +376,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SignOutResponse'
-        '401':
+                $ref: "#/components/schemas/SignOutResponse"
+        "401":
           description: Unauthorized (user not authenticated or token missing)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '422':
+                $ref: "#/components/schemas/Error"
+        "422":
           description: Unprocessable Entity (invalid or malformed JWT token)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
   /api/v1/users:
     post:
       summary: User registration
       tags:
         - Authentication
-      description: Registers a new user and returns a JWT token. Rate limited to 5 requests per minute per IP.
+      description: Registers a new user and returns a JWT token. Profile picture upload is not supported during signup. Rate limited to 5 requests per minute per IP.
       requestBody:
         required: true
         content:
@@ -376,17 +407,23 @@ paths:
                   properties:
                     email:
                       type: string
+                      example: user@example.com
                     password:
                       type: string
+                      example: password123
                     first_name:
                       type: string
+                      example: John
                     last_name:
                       type: string
+                      example: Doe
                     mobile_number:
                       type: string
+                      example: +1234567890
                     role:
                       type: string
                       enum: [user, supervisor]
+                      example: user
                   required:
                     - email
                     - password
@@ -397,18 +434,74 @@ paths:
               required:
                 - user
       responses:
-        '201':
+        "201":
           description: User created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AuthResponse'
-        '422':
-          description: Unprocessable Entity
+                $ref: "#/components/schemas/AuthResponse"
+              example:
+                token: eyJhbGciOiJIUzI1NiJ9...
+                user:
+                  id: 1
+                  email: user@example.com
+                  first_name: John
+                  last_name: Doe
+                  mobile_number: +1234567890
+                  role: user
+                  created_at: "2025-05-21T17:01:00Z"
+                  updated_at: "2025-05-21T17:01:00Z"
+                  profile_picture_url: null
+        "422":
+          description: Unprocessable Entity (e.g., invalid email, missing fields)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
+              example:
+                error: Unprocessable Entity
+                errors:
+                  - Email has already been taken
+                  - Password is too short
+  /api/v1/users/me:
+    get:
+      summary: Get current user details
+      tags:
+        - Users
+      description: Returns the authenticated user’s details, including profile picture URL. Requires a valid JWT token. Rate limited to 20 requests per minute per user.
+      security:
+        - Bearer: []
+      responses:
+        "200":
+          description: User details retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: "#/components/schemas/User"
+              example:
+                user:
+                  id: 1
+                  email: user@example.com
+                  first_name: John
+                  last_name: Doe
+                  mobile_number: +1234567890
+                  role: user
+                  created_at: "2025-05-21T17:01:00Z"
+                  updated_at: "2025-05-21T17:01:00Z"
+                  profile_picture_url: null
+        "401":
+          description: Unauthorized (invalid or missing token)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: Unauthorized
+                errors:
+                  - Invalid or missing token
   /api/v1/users/update_device_token:
     patch:
       summary: Update FCM device token
@@ -429,24 +522,24 @@ paths:
               required:
                 - device_token
       responses:
-        '200':
+        "200":
           description: Successful
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeviceTokenResponse'
-        '422':
+                $ref: "#/components/schemas/DeviceTokenResponse"
+        "422":
           description: Unprocessable Entity
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '401':
+                $ref: "#/components/schemas/Error"
+        "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
   /api/v1/movies:
     get:
       summary: List movies
@@ -488,18 +581,18 @@ paths:
             type: integer
           description: Page number for pagination
       responses:
-        '200':
+        "200":
           description: Successful
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MovieList'
-        '401':
+                $ref: "#/components/schemas/MovieList"
+        "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
     post:
       summary: Create movie
       tags:
@@ -555,30 +648,30 @@ paths:
                 - description
                 - premium
       responses:
-        '201':
+        "201":
           description: Created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Movie'
-        '422':
+                $ref: "#/components/schemas/Movie"
+        "422":
           description: Unprocessable Entity
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '401':
+                $ref: "#/components/schemas/Error"
+        "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/ abonnement /schemas/Error'
-        '403':
+                $ref: "#/components/schemas/Error"
+        "403":
           description: Forbidden (non-supervisor)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
   /api/v1/movies/{id}:
     get:
       summary: Show movie
@@ -594,24 +687,24 @@ paths:
           schema:
             type: integer
       responses:
-        '200':
+        "200":
           description: Successful
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Movie'
-        '404':
+                $ref: "#/components/schemas/Movie"
+        "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '401':
+                $ref: "#/components/schemas/Error"
+        "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
     put:
       summary: Update movie
       tags:
@@ -660,36 +753,36 @@ paths:
                   type: string
                   format: binary
       responses:
-        '200':
+        "200":
           description: Successful
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Movie'
-        '422':
+                $ref: "#/components/schemas/Movie"
+        "422":
           description: Unprocessable Entity
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '404':
+                $ref: "#/components/schemas/Error"
+        "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '401':
+                $ref: "#/components/schemas/Error"
+        "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '403':
+                $ref: "#/components/schemas/Error"
+        "403":
           description: Forbidden (non-supervisor)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
     delete:
       summary: Delete movie
       tags:
@@ -704,26 +797,26 @@ paths:
           schema:
             type: integer
       responses:
-        '204':
+        "204":
           description: No Content
-        '404':
+        "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '401':
+                $ref: "#/components/schemas/Error"
+        "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '403':
+                $ref: "#/components/schemas/Error"
+        "403":
           description: Forbidden (non-supervisor)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
   /api/v1/subscriptions:
     post:
       summary: Create a new subscription
@@ -737,44 +830,75 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SubscriptionCreateRequest'
+              $ref: "#/components/schemas/SubscriptionCreateRequest"
       responses:
-        '201':
+        "201":
           description: Subscription created successfully (for free plan)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionStatusResponse'
-        '200':
+                $ref: "#/components/schemas/SubscriptionStatusResponse"
+        "200":
           description: Stripe Payment Intent created (for basic/premium plans)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionPaymentIntentResponse'
-        '400':
+                $ref: "#/components/schemas/SubscriptionPaymentIntentResponse"
+        "400":
           description: Bad request (e.g., invalid plan ID)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '401':
+                $ref: "#/components/schemas/Error"
+        "401":
           description: Unauthorized (invalid or missing token)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '422':
+                $ref: "#/components/schemas/Error"
+        "422":
           description: Unprocessable Entity (e.g., validation errors)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '500':
+                $ref: "#/components/schemas/Error"
+        "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
+  /api/v1/subscriptions/status:
+    get:
+      summary: Get current subscription status
+      tags:
+        - Subscriptions
+      description: Retrieves the subscription status for the authenticated user. If the subscription is canceled and past its end_date, it transitions to a free plan. Requires a valid JWT token.
+      security:
+        - Bearer: []
+      responses:
+        "200":
+          description: Subscription status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionStatusResponse"
+              example:
+                plan: premium
+                status: canceled
+                current_period_end: "2025-12-31T23:59:59Z"
+        "401":
+          description: Unauthorized (invalid or missing token)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No active subscription found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/subscriptions/confirm:
     post:
       summary: Confirm a subscription payment
@@ -788,92 +912,70 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SubscriptionConfirmRequest'
+              $ref: "#/components/schemas/SubscriptionConfirmRequest"
       responses:
-        '200':
+        "200":
           description: Payment confirmed and subscription activated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionConfirmResponse'
-        '400':
+                $ref: "#/components/schemas/SubscriptionConfirmResponse"
+        "400":
           description: Bad request (e.g., payment not completed or invalid Payment Intent ID)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '401':
+                $ref: "#/components/schemas/Error"
+        "401":
           description: Unauthorized (invalid or missing token)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '422':
+                $ref: "#/components/schemas/Error"
+        "422":
           description: Unprocessable Entity (e.g., no pending subscription)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
   /api/v1/subscriptions/cancel:
     post:
       summary: Cancel a subscription
       tags:
         - Subscriptions
-      description: Cancels the authenticated user’s active subscription via Stripe. Requires a valid JWT token. Rate limited to 5 requests per minute per user.
+      description: Cancels the authenticated user’s active or past_due subscription. The subscription retains its plan_type and remains accessible until the current_period_end, after which it transitions to a free plan upon checking status. Requires a valid JWT token. Rate limited to 5 requests per minute per user.
       security:
         - Bearer: []
       responses:
-        '200':
+        "200":
           description: Subscription canceled successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionCancelResponse'
-        '401':
+                $ref: "#/components/schemas/SubscriptionCancelResponse"
+              example:
+                message: Subscription canceled successfully. You will revert to the free plan after 2025-12-31T23:59:59Z.
+                plan: premium
+                status: canceled
+                current_period_end: "2025-12-31T23:59:59Z"
+        "400":
+          description: Bad request (e.g., no active or past_due subscription)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
           description: Unauthorized (invalid or missing token)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '404':
-          description: Subscription not found
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: Unprocessable Entity (e.g., subscription cannot be canceled)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '422':
-          description: Unprocessable Entity (e.g., subscription already canceled)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-  /api/v1/subscriptions/status:
-    get:
-      summary: Get current subscription status
-      tags:
-        - Subscriptions
-      description: Retrieves the subscription status for the authenticated user. Requires a valid JWT token.
-      security:
-        - Bearer: []
-      responses:
-        '200':
-          description: Subscription status retrieved successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SubscriptionStatusResponse'
-        '401':
-          description: Unauthorized (invalid or missing token)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '404':
-          description: No active subscription found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
   /api/v1/webhooks/stripe:
     post:
       summary: Stripe webhook endpoint
@@ -896,18 +998,18 @@ paths:
                     id: pi_12345
                     status: succeeded
                     metadata:
-                      user_id: '1'
+                      user_id: "1"
                       plan_id: premium
       responses:
-        '200':
+        "200":
           description: Webhook processed successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WebhookResponse'
-        '400':
+                $ref: "#/components/schemas/WebhookResponse"
+        "400":
           description: Invalid payload or signature
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"

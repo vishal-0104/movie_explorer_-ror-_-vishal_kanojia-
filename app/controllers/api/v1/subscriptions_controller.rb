@@ -1,6 +1,6 @@
 class Api::V1::SubscriptionsController < ApplicationController
-  before_action :authenticate_api_v1_user!, only: [:create, :status, :confirm]
-  skip_before_action :verify_authenticity_token, only: [:create, :webhook, :confirm]
+  before_action :authenticate_api_v1_user!, only: [:create, :status, :confirm, :cancel]
+  skip_before_action :verify_authenticity_token, only: [:create, :webhook, :confirm, :cancel]
   skip_before_action :authenticate_api_v1_user!, only: [:webhook]
 
   def create
@@ -48,6 +48,50 @@ class Api::V1::SubscriptionsController < ApplicationController
     end
   end
 
+  def cancel
+    subscription = @current_user.subscription
+    unless subscription
+      create_free_subscription
+      subscription = @current_user.subscription
+      return render json: {
+        message: "No subscription found. Set to free plan.",
+        plan: subscription.plan_type,
+        status: subscription.status,
+        current_period_end: subscription.end_date
+      }, status: :ok
+    end
+
+    unless subscription.active? || subscription.past_due?
+      return render json: {
+        error: "No active or past due subscription to cancel",
+        errors: ["Subscription is #{subscription.status}"]
+      }, status: :bad_request
+    end
+
+    begin
+      if subscription.stripe_subscription_id && subscription.plan_type != "free"
+        Rails.logger.info "Canceling subscription with PaymentIntent ID: #{subscription.stripe_subscription_id}"
+      end
+
+      subscription.update!(status: "canceled")
+
+      NotificationService.send_cancellation_notification(@current_user) if @current_user.device_token
+
+      render json: {
+        message: "Subscription canceled successfully. You will revert to the free plan after #{subscription.end_date}.",
+        plan: subscription.plan_type,
+        status: subscription.status,
+        current_period_end: subscription.end_date
+      }, status: :ok
+    rescue Stripe::StripeError => e
+      Rails.logger.error "Stripe error during cancellation: #{e.message}"
+      render json: { error: "Cancellation failed", errors: [e.message] }, status: :unprocessable_entity
+    rescue StandardError => e
+      Rails.logger.error "Error during cancellation: #{e.message}"
+      render json: { error: "Cancellation failed", errors: [e.message] }, status: :unprocessable_entity
+    end
+  end
+
   def confirm
     subscription = @current_user.subscription
     Rails.logger.info "Subscription: #{subscription&.inspect}"
@@ -65,7 +109,6 @@ class Api::V1::SubscriptionsController < ApplicationController
         Rails.logger.error "Payment intent not succeeded: #{payment_intent.status}"
         return render json: { error: "Payment not completed", errors: ["Payment intent has not succeeded"] }, status: :bad_request
       end
-
 
       duration = subscription.plan_type == "basic" ? 7.days : 1.month
       subscription.update!(
@@ -89,7 +132,20 @@ class Api::V1::SubscriptionsController < ApplicationController
   def status
     subscription = @current_user.subscription
     unless subscription
-      return render json: { error: "No active subscription found", errors: ["User has no subscription"] }, status: :not_found
+      create_free_subscription
+      subscription = @current_user.subscription
+      return render json: {
+        plan: subscription.plan_type,
+        status: subscription.status,
+        current_period_end: subscription.end_date
+      }, status: :ok
+    end
+
+    if subscription.status == "canceled" && subscription.end_date && Time.current > subscription.end_date
+      subscription.destroy
+      create_free_subscription
+      subscription = @current_user.subscription
+      NotificationService.send_cancellation_notification(@current_user) if @current_user.device_token
     end
 
     render json: {
@@ -181,5 +237,15 @@ class Api::V1::SubscriptionsController < ApplicationController
     NotificationService.send_payment_failure_notification(user)
   rescue => e
     Rails.logger.error("Error in handle_payment_failure: #{e.message}")
+  end
+
+  def create_free_subscription
+    @current_user.subscription&.destroy
+    @current_user.build_subscription(
+      plan_type: "free",
+      status: "active",
+      start_date: Time.current,
+      end_date: nil
+    ).save!
   end
 end

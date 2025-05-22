@@ -9,7 +9,7 @@ class Api::V1::Users::RegistrationsController < Devise::RegistrationsController
     if resource.persisted?
       sign_in(resource_name, resource)
       token = Warden::JWTAuth::UserEncoder.new.call(resource, :user, nil)
-      request.env['warden-jwt_auth.token'] = token 
+      request.env['warden-jwt_auth.token'] = token
     end
     respond_with(resource)
   end
@@ -27,7 +27,7 @@ class Api::V1::Users::RegistrationsController < Devise::RegistrationsController
         user: user_response(resource)
       }, status: :created
     else
-      render json: { errors: resource.errors.full_messages }, status: :unprocessable_entity
+      render json: { error: 'Unprocessable Entity', errors: resource.errors.full_messages }, status: :unprocessable_entity
     end
   end
 
