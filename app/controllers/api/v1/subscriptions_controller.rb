@@ -21,6 +21,7 @@ class Api::V1::SubscriptionsController < ApplicationController
 
     if plan_id == "free"
       subscription.save!
+      NotificationService.send_subscription_notification(@current_user, plan_id) if @current_user.device_token
       return render json: { plan: subscription.plan_type, status: subscription.status, current_period_end: subscription.end_date }, status: :created
     end
 
@@ -74,15 +75,10 @@ class Api::V1::SubscriptionsController < ApplicationController
       end
 
       subscription.update!(status: "cancelled")
-
-      cache_key = "cancellation_notification_#{@current_user.id}_#{Time.current.to_i}"
-      unless Rails.cache.exist?(cache_key)
-        NotificationService.send_cancellation_notification(@current_user) if @current_user.device_token
-        Rails.cache.write(cache_key, true, expires_in: 1.hour)
-      end
+      NotificationService.send_cancellation_notification(@current_user) if @current_user.device_token
 
       render json: {
-        message: "Subscription cancelled successfully. You will be revert to the free plan after #{subscription.end_date}.",
+        message: "Subscription cancelled successfully. You will revert to the free plan after #{subscription.end_date}.",
         plan: subscription.plan_type,
         status: subscription.status,
         current_period_end: subscription.end_date
@@ -120,6 +116,7 @@ class Api::V1::SubscriptionsController < ApplicationController
         stripe_subscription_id: payment_intent.id,
         end_date: Time.current + duration
       )
+      NotificationService.send_subscription_notification(@current_user, subscription.plan_type) if @current_user.device_token
 
       render json: {
         plan: subscription.plan_type,
@@ -148,11 +145,7 @@ class Api::V1::SubscriptionsController < ApplicationController
       subscription.destroy
       create_free_subscription
       subscription = @current_user.subscription
-      cache_key = "cancellation_notification_#{@current_user.id}_#{Time.current.to_i}"
-      unless Rails.cache.exist?(cache_key)
-        NotificationService.send_cancellation_notification(@current_user) if @current_user.device_token
-        Rails.cache.write(cache_key, true, expires_in: 1.hour)
-      end
+      NotificationService.send_cancellation_notification(@current_user) if @current_user.device_token
     end
 
     render json: {
@@ -192,7 +185,6 @@ class Api::V1::SubscriptionsController < ApplicationController
     end
 
     Rails.cache.write(cache_key, true, expires_in: 24.hours)
-
     render json: { status: "success" }, status: :ok
   end
 
@@ -227,12 +219,7 @@ class Api::V1::SubscriptionsController < ApplicationController
       stripe_subscription_id: payment_intent.id,
       end_date: Time.current + duration
     )
-
-    cache_key = "subscription_notification_#{user.id}_#{payment_intent.id}"
-    unless Rails.cache.exist?(cache_key)
-      NotificationService.send_subscription_notification(user, subscription.plan_type) if user.device_token
-      Rails.cache.write(cache_key, true, expires_in: 1.hour)
-    end
+    NotificationService.send_subscription_notification(user, subscription.plan_type) if user.device_token
   rescue => e
     Rails.logger.error("Error in handle_payment_intent_succeeded: #{e.message}")
   end
@@ -242,13 +229,10 @@ class Api::V1::SubscriptionsController < ApplicationController
     return unless user&.subscription
 
     subscription = user.subscription
-    subscription.update!(status: "past_due")
+    return if subscription.status == "cancelled"
 
-    cache_key = "payment_failure_notification_#{user.id}_#{Time.current.to_i}"
-    unless Rails.cache.exist?(cache_key)
-      NotificationService.send_payment_failure_notification(user) if user.device_token
-      Rails.cache.write(cache_key, true, expires_in: 1.hour)
-    end
+    subscription.update!(status: "past_due")
+    NotificationService.send_payment_failure_notification(user) if user.device_token
   rescue => e
     Rails.logger.error("Error in handle_payment_intent_failed: #{e.message}")
   end
@@ -258,13 +242,11 @@ class Api::V1::SubscriptionsController < ApplicationController
     user = User.find_by(stripe_customer_id: customer_id)
     return unless user&.subscription
 
-    user.subscription.update!(status: "past_due")
+    subscription = user.subscription
+    return if subscription.status == "cancelled"
 
-    cache_key = "payment_failure_notification_#{user.id}_#{Time.current.to_i}"
-    unless Rails.cache.exist?(cache_key)
-      NotificationService.send_payment_failure_notification(user) if user.device_token
-      Rails.cache.write(cache_key, true, expires_in: 1.hour)
-    end
+    subscription.update!(status: "past_due")
+    NotificationService.send_payment_failure_notification(user) if user.device_token
   rescue => e
     Rails.logger.error("Error in handle_payment_failure: #{e.message}")
   end
@@ -277,5 +259,6 @@ class Api::V1::SubscriptionsController < ApplicationController
       start_date: Time.current,
       end_date: nil
     ).save!
+    NotificationService.send_cancellation_notification(@current_user) if @current_user.device_token
   end
 end

@@ -59,7 +59,7 @@ class NotificationService
       )
 
       if response.success?
-        Rails.logger.info("FCM notification sent to token: #{token}")
+        Rails.logger.info("FCM notification sent to token: #{token}, title: #{title}")
       else
         Rails.logger.error("FCM notification failed for token #{token}: #{response.body}")
       end
@@ -89,30 +89,43 @@ class NotificationService
   def self.send_subscription_notification(user, plan_type)
     return unless user.device_token
 
-    cache_key = "subscription_notification_#{user.id}_#{user.subscription&.stripe_subscription_id}"
-    return if Rails.cache.exist?(cache_key)
+    cache_key = "subscription_notification_#{user.id}_#{user.subscription&.id || 'no_subscription'}"
+    if Rails.cache.exist?(cache_key)
+      Rails.logger.info("Skipping subscription notification for user #{user.id}: already sent")
+      return
+    end
 
+    Rails.logger.info("Sending subscription notification for user #{user.id}, plan: #{plan_type}")
     response = send_fcm_notification(
       [user.device_token],
       "Subscription Activated!",
       "Your #{plan_type.capitalize} subscription has been successfully activated.",
       {
         plan_type: plan_type,
-        subscription_id: user.subscription&.stripe_subscription_id,
+        subscription_id: user.subscription&.stripe_subscription_id || '',
         action: "subscription_activated",
         notification_type: "subscription"
       }
     )
 
-    Rails.cache.write(cache_key, true, expires_in: 1.hour) if response&.any?(&:success?)
+    if response&.any?(&:success?)
+      Rails.logger.info("Subscription notification sent successfully for user #{user.id}")
+      Rails.cache.write(cache_key, true, expires_in: 1.hour)
+    else
+      Rails.logger.error("Failed to send subscription notification for user #{user.id}")
+    end
   end
 
   def self.send_payment_failure_notification(user)
     return unless user.device_token
 
-    cache_key = "payment_failure_notification_#{user.id}_#{Time.current.to_i}"
-    return if Rails.cache.exist?(cache_key)
+    cache_key = "payment_failure_notification_#{user.id}_#{user.subscription&.id || 'no_subscription'}"
+    if Rails.cache.exist?(cache_key)
+      Rails.logger.info("Skipping payment failure notification for user #{user.id}: already sent")
+      return
+    end
 
+    Rails.logger.info("Sending payment failure notification for user #{user.id}")
     response = send_fcm_notification(
       [user.device_token],
       "Payment Failed",
@@ -124,15 +137,24 @@ class NotificationService
       }
     )
 
-    Rails.cache.write(cache_key, true, expires_in: 1.hour) if response&.any?(&:success?)
+    if response&.any?(&:success?)
+      Rails.logger.info("Payment failure notification sent successfully for user #{user.id}")
+      Rails.cache.write(cache_key, true, expires_in: 1.hour)
+    else
+      Rails.logger.error("Failed to send payment failure notification for user #{user.id}")
+    end
   end
 
   def self.send_cancellation_notification(user)
     return unless user.device_token
 
-    cache_key = "cancellation_notification_#{user.id}_#{Time.current.to_i}"
-    return if Rails.cache.exist?(cache_key)
+    cache_key = "cancellation_notification_#{user.id}_#{user.subscription&.id || 'no_subscription'}"
+    if Rails.cache.exist?(cache_key)
+      Rails.logger.info("Skipping cancellation notification for user #{user.id}: already sent")
+      return
+    end
 
+    Rails.logger.info("Sending cancellation notification for user #{user.id}")
     response = send_fcm_notification(
       [user.device_token],
       "Subscription Cancelled",
@@ -144,7 +166,12 @@ class NotificationService
       }
     )
 
-    Rails.cache.write(cache_key, true, expires_in: 1.hour) if response&.any?(&:success?)
+    if response&.any?(&:success?)
+      Rails.logger.info("Cancellation notification sent successfully for user #{user.id}")
+      Rails.cache.write(cache_key, true, expires_in: 1.hour)
+    else
+      Rails.logger.error("Failed to send cancellation notification for user #{user.id}")
+    end
   end
 
   private
@@ -168,6 +195,7 @@ class NotificationService
 
       valid_tokens.each do |token|
         cache_key = "movie_notification_#{movie.id}_#{title_prefix.downcase.gsub(' ', '_')}_#{Digest::SHA256.hexdigest(token)}"
+        Rails.logger.info("Sending movie notification (#{title_prefix}) for movie #{movie.id} to token #{token}")
 
         response = send_fcm_notification(
           [token],
@@ -183,7 +211,12 @@ class NotificationService
           }
         )
 
-        Rails.cache.write(cache_key, true, expires_in: 1.hour) if response&.any?(&:success?)
+        if response&.any?(&:success?)
+          Rails.logger.info("Movie notification (#{title_prefix}) sent successfully for movie #{movie.id} to token #{token}")
+          Rails.cache.write(cache_key, true, expires_in: 1.hour)
+        else
+          Rails.logger.error("Failed to send movie notification (#{title_prefix}) for movie #{movie.id} to token #{token}")
+        end
       end
     end
   end

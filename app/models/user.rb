@@ -41,7 +41,8 @@ class User < ApplicationRecord
   end
 
   def can_access_premium_movies?
-    premium?
+    return false unless subscription
+    subscription.premium? && (subscription.active? || (subscription.status == "cancelled" && subscription.end_date && subscription.end_date > Time.current))
   end
 
   def self.ransackable_attributes(auth_object = nil)

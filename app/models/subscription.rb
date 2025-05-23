@@ -11,8 +11,6 @@ class Subscription < ApplicationRecord
   validates :stripe_customer_id, presence: true, unless: -> { plan_type == 'free' || status == 'pending' }
   validates :end_date, presence: true, if: -> { plan_type != 'free' }
 
-  after_update :send_notification, if: :significant_change?
-
   def active?
     status == 'active' && (end_date.nil? || end_date > Time.current)
   end
@@ -27,23 +25,5 @@ class Subscription < ApplicationRecord
 
   def self.ransackable_associations(auth_object = nil)
     %w[user]
-  end
-
-  private
-
-  def significant_change?
-    saved_change_to_plan_type? || saved_change_to_status?
-  end
-
-  def send_notification
-    return unless user.device_token.present?
-
-    if saved_change_to_plan_type? && plan_type != 'free'
-      NotificationService.send_subscription_notification(user, plan_type)
-    elsif saved_change_to_status? && status.in?(['cancelled', 'past_due'])
-      NotificationService.send_payment_failure_notification(user)
-    end
-  rescue StandardError => e
-    Rails.logger.error "[Subscription Notification] Error for user #{user.id}: #{e.message}"
   end
 end
