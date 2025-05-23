@@ -159,11 +159,19 @@ class NotificationService
 
   def self.send_movie_notification(movie, title_prefix, body_action, event_type)
     @mutex.synchronize do
+
       movie_data = {
         id: movie.id,
         title: movie.title,
         premium: movie.premium
       }
+
+
+      cache_key = "notification:#{event_type}:#{movie_data[:id]}"
+      if Rails.cache.exist?(cache_key)
+        Rails.logger.info("Skipping duplicate #{title_prefix} notification for movie #{movie_data[:id]}")
+        return
+      end
 
       users = movie_data[:premium] ? User.with_active_subscription : User.all
       eligible_users = users.where.not(device_token: nil)
@@ -195,6 +203,7 @@ class NotificationService
       if response&.any?(&:success?)
         Rails.logger.info("Movie notification (#{title_prefix}) sent to #{device_tokens.size} tokens")
         eligible_users.update_all(updated_at: Time.current)
+        Rails.cache.write(cache_key, true, expires_in: 1.hour)
       else
         Rails.logger.error("Failed to send movie notification (#{title_prefix}) to tokens")
       end
