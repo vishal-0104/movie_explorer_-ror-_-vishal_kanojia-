@@ -1,13 +1,13 @@
 class Api::V1::MoviesController < ApplicationController
-  before_action :authenticate_api_v1_user!, except: [ :index ]
-  before_action :restrict_to_supervisor, only: [ :create, :update, :destroy ]
+  before_action :authenticate_api_v1_user!, except: [:index]
+  before_action :restrict_to_supervisor, only: [:create, :update, :destroy]
   skip_before_action :verify_authenticity_token
 
   def index
     movies = Movie.search_and_filter(params.slice(:title, :genre, :release_year, :min_rating, :premium))
     movies = movies.page(params[:page]).per(10)
     render json: {
-      movies: movies.as_json(methods: [ :poster_url, :banner_url ]),
+      movies: movies.as_json(methods: [:poster_url, :banner_url]),
       meta: { current_page: movies.current_page, total_pages: movies.total_pages, total_count: movies.total_count }
     }, status: :ok
   end
@@ -20,7 +20,7 @@ class Api::V1::MoviesController < ApplicationController
       return
     end
 
-    render json: movie.as_json(methods: [ :poster_url, :banner_url ]), status: :ok
+    render json: movie.as_json(methods: [:poster_url, :banner_url]), status: :ok
   rescue ActiveRecord::RecordNotFound
     render json: { error: "Movie not found" }, status: :not_found
   end
@@ -29,7 +29,7 @@ class Api::V1::MoviesController < ApplicationController
     result = Movie.create_movie(movie_params)
     if result[:success]
       NotificationService.send_new_movie_notification(result[:movie])
-      render json: result[:movie].as_json(methods: [ :poster_url, :banner_url ]), status: :created
+      render json: result[:movie].as_json(methods: [:poster_url, :banner_url]), status: :created
     else
       render json: { errors: result[:errors] }, status: :unprocessable_entity
     end
@@ -40,7 +40,7 @@ class Api::V1::MoviesController < ApplicationController
     result = movie.update_movie(movie_params)
     if result[:success]
       NotificationService.send_updated_movie_notification(result[:movie])
-      render json: result[:movie].as_json(methods: [ :poster_url, :banner_url ]), status: :ok
+      render json: result[:movie].as_json(methods: [:poster_url, :banner_url]), status: :ok
     else
       render json: { errors: result[:errors] }, status: :unprocessable_entity
     end
@@ -50,13 +50,19 @@ class Api::V1::MoviesController < ApplicationController
 
   def destroy
     movie = Movie.find(params[:id])
+    movie_data = {
+      id: movie.id,
+      title: movie.title,
+      premium: movie.premium
+    }
+    NotificationService.send_deleted_movie_notification(OpenStruct.new(movie_data))
     movie.destroy
     render json: { message: "Movie deleted successfully", id: movie.id }, status: :ok
-  begin
-    NotificationService.send_deleted_movie_notification(movie)
+  rescue ActiveRecord::RecordNotFound
+    render json: { error: "Movie not found" }, status: :not_found
   rescue StandardError => e
     Rails.logger.error("Failed to send delete notification: #{e.message}")
-  end
+    render json: { error: "Failed to delete movie" }, status: :internal_server_error
   end
 
   private

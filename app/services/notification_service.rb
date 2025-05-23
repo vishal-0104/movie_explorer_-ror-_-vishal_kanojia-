@@ -158,31 +158,34 @@ class NotificationService
   private
 
   def self.send_movie_notification(movie, title_prefix, body_action, event_type)
-  @mutex.synchronize do
-    users = movie.premium? ? User.with_active_subscription : User.all
-    eligible_users = users.where.not(device_token: nil)
-                         .where("users.updated_at < ?", 1.minute.ago)
-    device_tokens = eligible_users.pluck(:device_token).uniq
+    @mutex.synchronize do
+      movie_data = {
+        id: movie.id,
+        title: movie.title,
+        premium: movie.premium
+      }
 
-    return if device_tokens.empty?
+      users = movie_data[:premium] ? User.with_active_subscription : User.all
+      eligible_users = users.where.not(device_token: nil)
+                           .where("users.updated_at < ?", 1.minute.ago)
+                           .select(:id, :device_token)
+      device_tokens = eligible_users.pluck(:device_token).uniq
 
-    base_url = ENV['APP_BASE_URL']
-    movie_url = "#{base_url}/movies/#{movie.id}"
+      return if device_tokens.empty?
 
-    Rails.logger.info("Sending #{title_prefix} notification for movie #{movie.id} to #{device_tokens.size} users")
+      base_url = ENV['APP_BASE_URL']
+      movie_url = "#{base_url}/movies/#{movie_data[:id]}"
 
-    device_tokens.each do |token|
-      user = eligible_users.find_by(device_token: token)
-      next unless user
+      Rails.logger.info("Sending #{title_prefix} notification for movie #{movie_data[:id]} to #{device_tokens.size} users")
 
       response = send_fcm_notification(
-        [token],
+        device_tokens,
         title_prefix,
-        "#{movie.title} #{body_action}#{movie.premium? ? ' for premium users' : ''}!",
+        "#{movie_data[:title]} #{body_action}#{movie_data[:premium] ? ' for premium users' : ''}!",
         {
-          movie_id: movie.id.to_s,
-          title: movie.title,
-          premium: movie.premium.to_s,
+          movie_id: movie_data[:id].to_s,
+          title: movie_data[:title],
+          premium: movie_data[:premium].to_s,
           action: event_type,
           notification_type: "movie",
           url: movie_url
@@ -190,13 +193,12 @@ class NotificationService
       )
 
       if response&.any?(&:success?)
-        Rails.logger.info("Movie notification (#{title_prefix}) sent to token #{token}")
-        user.touch
+        Rails.logger.info("Movie notification (#{title_prefix}) sent to #{device_tokens.size} tokens")
+        eligible_users.update_all(updated_at: Time.current)
       else
-        Rails.logger.error("Failed to send movie notification (#{title_prefix}) to token #{token}")
+        Rails.logger.error("Failed to send movie notification (#{title_prefix}) to tokens")
       end
     end
-  end
   end
 
   def self.handle_response_errors(responses, tokens)
