@@ -14,35 +14,40 @@ class Api::V1::MoviesController < ApplicationController
 
   def show
     movie = Movie.find(params[:id])
-
     if movie.premium && !@current_user.can_access_premium_movies?
       render json: { error: "Premium subscription required to view this movie" }, status: :forbidden
       return
     end
-
     render json: movie.as_json(methods: [:poster_url, :banner_url]), status: :ok
   rescue ActiveRecord::RecordNotFound
     render json: { error: "Movie not found" }, status: :not_found
   end
 
   def create
-    result = Movie.create_movie(movie_params)
-    if result[:success]
-      NotificationService.send_new_movie_notification(result[:movie])
-      render json: result[:movie].as_json(methods: [:poster_url, :banner_url]), status: :created
+    movie = Movie.new(movie_params)
+    if movie.save
+      begin
+        NotificationService.send_new_movie_notification(movie)
+      rescue StandardError => e
+        Rails.logger.error("Failed to send new movie notification for movie #{movie.id}: #{e.message}, Backtrace: #{e.backtrace.join("\n")}")
+      end
+      render json: movie.as_json(methods: [:poster_url, :banner_url]), status: :created
     else
-      render json: { errors: result[:errors] }, status: :unprocessable_entity
+      render json: { errors: movie.errors.full_messages }, status: :unprocessable_entity
     end
   end
 
   def update
     movie = Movie.find(params[:id])
-    result = movie.update_movie(movie_params)
-    if result[:success]
-      NotificationService.send_updated_movie_notification(result[:movie])
-      render json: result[:movie].as_json(methods: [:poster_url, :banner_url]), status: :ok
+    if movie.update(movie_params)
+      begin
+        NotificationService.send_updated_movie_notification(movie)
+      rescue StandardError => e
+        Rails.logger.error("Failed to send updated movie notification for movie #{movie.id}: #{e.message}, Backtrace: #{e.backtrace.join("\n")}")
+      end
+      render json: movie.as_json(methods: [:poster_url, :banner_url]), status: :ok
     else
-      render json: { errors: result[:errors] }, status: :unprocessable_entity
+      render json: { errors: movie.errors.full_messages }, status: :unprocessable_entity
     end
   rescue ActiveRecord::RecordNotFound
     render json: { error: "Movie not found" }, status: :not_found
@@ -50,14 +55,18 @@ class Api::V1::MoviesController < ApplicationController
 
   def destroy
     movie = Movie.find(params[:id])
-    NotificationService.send_deleted_movie_notification(movie)
-    movie.destroy
-    render json: { message: "Movie deleted successfully", id: movie.id }, status: :ok
+    if movie.destroy
+      begin
+        NotificationService.send_deleted_movie_notification(movie)
+      rescue StandardError => e
+        Rails.logger.error("Failed to send deleted movie notification for movie #{movie.id}: #{e.message}, Backtrace: #{e.backtrace.join("\n")}")
+      end
+      render json: { message: "Movie deleted successfully", id: movie.id }, status: :ok
+    else
+      render json: { error: "Failed to delete movie" }, status: :unprocessable_entity
+    end
   rescue ActiveRecord::RecordNotFound
     render json: { error: "Movie not found" }, status: :not_found
-  rescue StandardError => e
-    Rails.logger.error("Failed to send delete notification: #{e.message}")
-    render json: { error: "Failed to delete movie" }, status: :internal_server_error
   end
 
   private
@@ -73,7 +82,6 @@ class Api::V1::MoviesController < ApplicationController
 
   def restrict_to_supervisor
     unless @current_user&.supervisor?
-      Rails.logger.warn("Unauthorized access attempt by user: #{@current_user&.email || 'Unauthenticated'}")
       render json: { error: "Only supervisors can perform this action" }, status: :forbidden
     end
   end
