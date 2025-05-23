@@ -4,6 +4,7 @@ require 'googleauth'
 class NotificationService
   ACCESS_TOKEN_CACHE_KEY = 'fcm_access_token'.freeze
   ACCESS_TOKEN_EXPIRY = 55.minutes
+  @mutex = Mutex.new
 
   def self.get_access_token
     cached_token = Rails.cache.read(ACCESS_TOKEN_CACHE_KEY)
@@ -75,25 +76,20 @@ class NotificationService
   end
 
   def self.send_new_movie_notification(movie)
-    send_movie_notification(movie, "New Movie Added", "is now available")
+    send_movie_notification(movie, "New Movie Added", "is now available", "movie_added")
   end
 
   def self.send_updated_movie_notification(movie)
-    send_movie_notification(movie, "Movie Updated", "has been updated")
+    return if movie.destroyed?
+    send_movie_notification(movie, "Movie Updated", "has been updated", "movie_updated")
   end
 
   def self.send_deleted_movie_notification(movie)
-    send_movie_notification(movie, "Movie Removed", "is no longer available")
+    send_movie_notification(movie, "Movie Removed", "is no longer available", "movie_removed")
   end
 
   def self.send_subscription_notification(user, plan_type)
     return unless user.device_token
-
-    cache_key = "subscription_notification_#{user.id}_#{user.subscription&.id || 'no_subscription'}"
-    if Rails.cache.exist?(cache_key)
-      Rails.logger.info("Skipping subscription notification for user #{user.id}: already sent")
-      return
-    end
 
     Rails.logger.info("Sending subscription notification for user #{user.id}, plan: #{plan_type}")
     response = send_fcm_notification(
@@ -110,7 +106,6 @@ class NotificationService
 
     if response&.any?(&:success?)
       Rails.logger.info("Subscription notification sent successfully for user #{user.id}")
-      Rails.cache.write(cache_key, true, expires_in: 1.hour)
     else
       Rails.logger.error("Failed to send subscription notification for user #{user.id}")
     end
@@ -118,12 +113,6 @@ class NotificationService
 
   def self.send_payment_failure_notification(user)
     return unless user.device_token
-
-    cache_key = "payment_failure_notification_#{user.id}_#{user.subscription&.id || 'no_subscription'}"
-    if Rails.cache.exist?(cache_key)
-      Rails.logger.info("Skipping payment failure notification for user #{user.id}: already sent")
-      return
-    end
 
     Rails.logger.info("Sending payment failure notification for user #{user.id}")
     response = send_fcm_notification(
@@ -139,7 +128,6 @@ class NotificationService
 
     if response&.any?(&:success?)
       Rails.logger.info("Payment failure notification sent successfully for user #{user.id}")
-      Rails.cache.write(cache_key, true, expires_in: 1.hour)
     else
       Rails.logger.error("Failed to send payment failure notification for user #{user.id}")
     end
@@ -147,12 +135,6 @@ class NotificationService
 
   def self.send_cancellation_notification(user)
     return unless user.device_token
-
-    cache_key = "cancellation_notification_#{user.id}_#{user.subscription&.id || 'no_subscription'}"
-    if Rails.cache.exist?(cache_key)
-      Rails.logger.info("Skipping cancellation notification for user #{user.id}: already sent")
-      return
-    end
 
     Rails.logger.info("Sending cancellation notification for user #{user.id}")
     response = send_fcm_notification(
@@ -168,7 +150,6 @@ class NotificationService
 
     if response&.any?(&:success?)
       Rails.logger.info("Cancellation notification sent successfully for user #{user.id}")
-      Rails.cache.write(cache_key, true, expires_in: 1.hour)
     else
       Rails.logger.error("Failed to send cancellation notification for user #{user.id}")
     end
@@ -176,46 +157,43 @@ class NotificationService
 
   private
 
-  def self.send_movie_notification(movie, title_prefix, body_action)
-    users = movie.premium? ? User.with_active_subscription : User.all
-    device_tokens = users.where.not(device_token: nil).pluck(:device_token).uniq
+  def self.send_movie_notification(movie, title_prefix, body_action, event_type)
+    @mutex.synchronize do
+      users = movie.premium? ? User.with_active_subscription : User.all
+      eligible_users = users.where.not(device_token: nil)
+                           .where("updated_at < ?", 1.minute.ago)
+      device_tokens = eligible_users.pluck(:device_token).uniq
 
-    return if device_tokens.empty?
+      return if device_tokens.empty?
 
-    base_url = ENV['APP_BASE_URL']
-    movie_url = "#{base_url}/movies/#{movie.id}"
+      base_url = ENV['APP_BASE_URL']
+      movie_url = "#{base_url}/movies/#{movie.id}"
 
-    device_tokens.each_slice(500) do |token_batch|
-      valid_tokens = token_batch.reject do |token|
-        cache_key = "movie_notification_#{movie.id}_#{title_prefix.downcase.gsub(' ', '_')}_#{Digest::SHA256.hexdigest(token)}"
-        Rails.cache.exist?(cache_key)
-      end
+      Rails.logger.info("Sending #{title_prefix} notification for movie #{movie.id} to #{device_tokens.size} users")
 
-      next if valid_tokens.empty?
-
-      valid_tokens.each do |token|
-        cache_key = "movie_notification_#{movie.id}_#{title_prefix.downcase.gsub(' ', '_')}_#{Digest::SHA256.hexdigest(token)}"
-        Rails.logger.info("Sending movie notification (#{title_prefix}) for movie #{movie.id} to token #{token}")
+      device_tokens.each do |token|
+        user = eligible_users.find_by(device_token: token)
+        next unless user
 
         response = send_fcm_notification(
           [token],
-          "#{title_prefix}",
+          title_prefix,
           "#{movie.title} #{body_action}#{movie.premium? ? ' for premium users' : ''}!",
           {
             movie_id: movie.id.to_s,
             title: movie.title,
             premium: movie.premium.to_s,
-            action: title_prefix.downcase.gsub(" ", "_"),
+            action: event_type,
             notification_type: "movie",
             url: movie_url
           }
         )
 
         if response&.any?(&:success?)
-          Rails.logger.info("Movie notification (#{title_prefix}) sent successfully for movie #{movie.id} to token #{token}")
-          Rails.cache.write(cache_key, true, expires_in: 1.hour)
+          Rails.logger.info("Movie notification (#{title_prefix}) sent to token #{token}")
+          user.touch
         else
-          Rails.logger.error("Failed to send movie notification (#{title_prefix}) for movie #{movie.id} to token #{token}")
+          Rails.logger.error("Failed to send movie notification (#{title_prefix}) to token #{token}")
         end
       end
     end
