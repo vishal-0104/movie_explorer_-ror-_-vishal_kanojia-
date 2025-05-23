@@ -4,6 +4,7 @@ require 'googleauth'
 class NotificationService
   ACCESS_TOKEN_CACHE_KEY = 'fcm_access_token'.freeze
   ACCESS_TOKEN_EXPIRY = 55.minutes
+  FCM_TOKEN_REGEX = /\A[a-zA-Z0-9:_\-\.=]{50,300}\z/.freeze
 
   def self.get_access_token
     cached_token = Rails.cache.read(ACCESS_TOKEN_CACHE_KEY)
@@ -17,19 +18,23 @@ class NotificationService
     Rails.cache.write(ACCESS_TOKEN_CACHE_KEY, token, expires_in: ACCESS_TOKEN_EXPIRY)
     token
   rescue StandardError => e
-    Rails.logger.error("Failed to fetch FCM access token: #{e.message}, Backtrace: #{e.backtrace.join("\n")}")
+    Rails.logger.error("Failed to fetch FCM access token for project #{ENV['FCM_PROJECT_ID']}: #{e.message}, Backtrace: #{e.backtrace.join("\n")}")
     nil
   end
 
   def self.send_fcm_notification(tokens, title, body, data = {})
     return if tokens.blank?
 
-    # Relaxed token validation to avoid false negatives
-    valid_tokens = tokens.uniq.select { |t| t.present? && t.length > 50 }
+    # Validate tokens using the same regex as UsersController
+    valid_tokens = tokens.uniq.select { |t| t.present? && t.match?(FCM_TOKEN_REGEX) }
     invalid_tokens = tokens - valid_tokens
     invalid_tokens.each do |token|
-      Rails.logger.warn("Invalid FCM token: #{token} (length: #{token&.length || 0})")
-      User.where(device_token: token).update_all(device_token: nil)
+      Rails.logger.warn("Invalid FCM token detected: #{token}")
+      # Find users with this token and include user ID in logs
+      User.where(device_token: token).each do |user|
+        Rails.logger.info("Removing invalid FCM token: #{token} for user ID: #{user.id}")
+        user.update(device_token: nil)
+      end
     end
 
     if valid_tokens.empty?
@@ -39,7 +44,7 @@ class NotificationService
 
     access_token = get_access_token
     unless access_token
-      Rails.logger.error("No FCM access token available")
+      Rails.logger.error("No FCM access token available, cannot send notifications")
       return
     end
 
@@ -50,6 +55,16 @@ class NotificationService
 
     responses = []
     valid_tokens.each do |token|
+      # Find user(s) associated with the token for logging context
+      users = User.where(device_token: token)
+      user_ids = users.pluck(:id).join(', ')
+
+      if users.count > 1
+        Rails.logger.warn("Duplicate FCM token #{token} found for user IDs: #{user_ids}")
+        users.each { |user| user.update(device_token: nil) }
+        next
+      end
+
       payload = {
         message: {
           token: token,
@@ -65,9 +80,9 @@ class NotificationService
       )
 
       if response.success?
-        Rails.logger.info("FCM notification sent to token: #{token}, title: #{title}")
+        Rails.logger.info("FCM notification sent to token: #{token}, user IDs: #{user_ids}, title: #{title}")
       else
-        Rails.logger.error("FCM notification failed for token: #{token}, status: #{response.code}, body: #{response.body}")
+        Rails.logger.error("FCM notification failed for token: #{token}, user IDs: #{user_ids}, status: #{response.code}, body: #{response.body}")
       end
       responses << response
     end
@@ -112,9 +127,9 @@ class NotificationService
 
     if response&.any?(&:success?)
       Rails.cache.write(cache_key, true, expires_in: 1.hour)
-      Rails.logger.info("Subscription notification sent for user #{user.id}")
+      Rails.logger.info("Subscription notification sent for user ID: #{user.id}, plan: #{plan_type}")
     else
-      Rails.logger.error("Failed to send subscription notification for user #{user.id}")
+      Rails.logger.error("Failed to send subscription notification for user ID: #{user.id}")
     end
   end
 
@@ -137,9 +152,9 @@ class NotificationService
 
     if response&.any?(&:success?)
       Rails.cache.write(cache_key, true, expires_in: 1.hour)
-      Rails.logger.info("Payment failure notification sent for user #{user.id}")
+      Rails.logger.info("Payment failure notification sent for user ID: #{user.id}")
     else
-      Rails.logger.error("Failed to send payment failure notification for user #{user.id}")
+      Rails.logger.error("Failed to send payment failure notification for user ID: #{user.id}")
     end
   end
 
@@ -162,9 +177,9 @@ class NotificationService
 
     if response&.any?(&:success?)
       Rails.cache.write(cache_key, true, expires_in: 1.hour)
-      Rails.logger.info("Cancellation notification sent for user #{user.id}")
+      Rails.logger.info("Cancellation notification sent for user ID: #{user.id}")
     else
-      Rails.logger.error("Failed to send cancellation notification for user #{user.id}")
+      Rails.logger.error("Failed to send cancellation notification for user ID: #{user.id}")
     end
   end
 
@@ -224,11 +239,19 @@ class NotificationService
       fcm_error_code = response.parsed_response.dig('error', 'details')&.find { |d| d['@type'] == 'type.googleapis.com/google.firebase.fcm.v1.FcmError' }&.dig('errorCode')
       token = tokens[index]
 
-      Rails.logger.warn("FCM error for token #{token}: #{error_code} - #{error_message}#{fcm_error_code ? " (FCM errorCode: #{fcm_error_code})" : ''}")
+      # Find user(s) associated with the token for logging context
+      users = User.where(device_token: token)
+      user_ids = users.pluck(:id).join(', ')
+
+      Rails.logger.warn("FCM error for token #{token}, user IDs: #{user_ids}: #{error_code} - #{error_message}#{fcm_error_code ? " (FCM errorCode: #{fcm_error_code})" : ''}")
 
       if fcm_error_code == 'UNREGISTERED' || error_message&.include?('NotRegistered') || error_message&.include?('InvalidRegistration')
-        User.where(device_token: token).update_all(device_token: nil)
-        Rails.logger.info("Removed invalid FCM token: #{token}")
+        users.each do |user|
+          Rails.logger.info("Removed invalid FCM token: #{token} for user ID: #{user.id}")
+          user.update(device_token: nil)
+          # Increment a counter for monitoring
+          Rails.cache.increment("fcm_invalid_token_count")
+        end
       end
     end
   end
