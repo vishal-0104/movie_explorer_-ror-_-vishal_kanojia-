@@ -50,12 +50,7 @@ class Api::V1::MoviesController < ApplicationController
 
   def destroy
     movie = Movie.find(params[:id])
-    movie_data = {
-      id: movie.id,
-      title: movie.title,
-      premium: movie.premium
-    }
-    NotificationService.send_deleted_movie_notification(OpenStruct.new(movie_data))
+    NotificationService.send_deleted_movie_notification(movie)
     movie.destroy
     render json: { message: "Movie deleted successfully", id: movie.id }, status: :ok
   rescue ActiveRecord::RecordNotFound

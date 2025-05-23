@@ -4,7 +4,6 @@ require 'googleauth'
 class NotificationService
   ACCESS_TOKEN_CACHE_KEY = 'fcm_access_token'.freeze
   ACCESS_TOKEN_EXPIRY = 55.minutes
-  @mutex = Mutex.new
 
   def self.get_access_token
     cached_token = Rails.cache.read(ACCESS_TOKEN_CACHE_KEY)
@@ -19,7 +18,7 @@ class NotificationService
     Rails.cache.write(ACCESS_TOKEN_CACHE_KEY, token, expires_in: ACCESS_TOKEN_EXPIRY)
     token
   rescue StandardError => e
-    Rails.logger.error("Failed to fetch FCM access token: #{e.message}")
+    Rails.logger.error("Failed to fetch FCM access token: #{e.message}, Backtrace: #{e.backtrace.join("\n")}")
     raise
   end
 
@@ -29,9 +28,11 @@ class NotificationService
     valid_tokens = tokens.uniq.select { |t| t&.match?(/\A[a-zA-Z0-9:_\-\.]{100,200}\z/) }
     invalid_tokens = tokens - valid_tokens
     invalid_tokens.each do |token|
-      Rails.logger.warn("Skipping invalid FCM token: #{token}")
-      User.where(device_token: token).update_all(device_token: nil) if token.match?(/\AeyJ/)
+      Rails.logger.warn("Invalid FCM token detected: #{token}")
+      User.where(device_token: token).update_all(device_token: nil)
     end
+
+    Rails.logger.info("Valid tokens: #{valid_tokens.count}, Invalid tokens: #{invalid_tokens.count}")
 
     return if valid_tokens.empty?
 
@@ -80,7 +81,10 @@ class NotificationService
   end
 
   def self.send_updated_movie_notification(movie)
-    return if movie.destroyed?
+    if movie.destroyed?
+      Rails.logger.warn("Skipping update notification for destroyed movie: #{movie.id}")
+      return
+    end
     send_movie_notification(movie, "Movie Updated", "has been updated", "movie_updated")
   end
 
@@ -158,16 +162,22 @@ class NotificationService
   private
 
   def self.send_movie_notification(movie, title_prefix, body_action, event_type)
-    @mutex.synchronize do
+    Rails.cache.with_lock("notification:lock:#{event_type}:#{movie.id}", timeout: 10, retries: 3) do
+      movie_data = if movie.is_a?(OpenStruct)
+                     {
+                       id: movie.id,
+                       title: movie.title,
+                       premium: movie.premium
+                     }
+                   else
+                     {
+                       id: movie.id,
+                       title: movie.title,
+                       premium: movie.premium
+                     }
+                    end
 
-      movie_data = {
-        id: movie.id,
-        title: movie.title,
-        premium: movie.premium
-      }
-
-
-      cache_key = "notification:#{event_type}:#{movie_data[:id]}"
+      cache_key = "notification:#{event_type}:#{movie_data[:id]}:#{Time.current.to_i / 3600}"
       if Rails.cache.exist?(cache_key)
         Rails.logger.info("Skipping duplicate #{title_prefix} notification for movie #{movie_data[:id]}")
         return
@@ -178,6 +188,8 @@ class NotificationService
                            .where("users.updated_at < ?", 1.minute.ago)
                            .select(:id, :device_token)
       device_tokens = eligible_users.pluck(:device_token).uniq
+
+      Rails.logger.info("Eligible users for #{title_prefix} notification: #{eligible_users.count}, tokens: #{device_tokens.count}")
 
       return if device_tokens.empty?
 
@@ -205,9 +217,11 @@ class NotificationService
         eligible_users.update_all(updated_at: Time.current)
         Rails.cache.write(cache_key, true, expires_in: 1.hour)
       else
-        Rails.logger.error("Failed to send movie notification (#{title_prefix}) to tokens")
+        Rails.logger.error("Failed to send movie notification (#{title_prefix}) to tokens: #{response.inspect}")
       end
     end
+  rescue Redis::Lock::LockTimeout
+    Rails.logger.warn("Could not acquire lock for #{title_prefix} notification for movie #{movie.id}")
   end
 
   def self.handle_response_errors(responses, tokens)
