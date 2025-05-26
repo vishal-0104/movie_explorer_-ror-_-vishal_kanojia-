@@ -1,5 +1,6 @@
 require 'httparty'
 require 'googleauth'
+require 'twilio-ruby'
 
 class NotificationService
   ACCESS_TOKEN_CACHE_KEY = 'fcm_access_token'.freeze
@@ -25,26 +26,21 @@ class NotificationService
   def self.send_fcm_notification(tokens, title, body, data = {})
     return if tokens.blank?
 
-    # Validate tokens using the same regex as UsersController
     valid_tokens = tokens.uniq.select { |t| t.present? && t.match?(FCM_TOKEN_REGEX) }
     invalid_tokens = tokens - valid_tokens
     invalid_tokens.each do |token|
       Rails.logger.warn("Invalid FCM token detected: #{token}")
-      # Find users with this token and include user ID in logs
       User.where(device_token: token).each do |user|
         Rails.logger.info("Removing invalid FCM token: #{token} for user ID: #{user.id}")
         user.update(device_token: nil)
       end
     end
 
-    if valid_tokens.empty?
-      Rails.logger.info("No valid tokens to send FCM notification. Provided tokens: #{tokens.inspect}")
-      return
-    end
+    return if valid_tokens.empty?
 
     access_token = get_access_token
     unless access_token
-      Rails.logger.error("No FCM access token available, cannot send notifications")
+      Rails.logger.error("No FCM access token available")
       return
     end
 
@@ -55,12 +51,10 @@ class NotificationService
 
     responses = []
     valid_tokens.each do |token|
-      # Find user(s) associated with the token for logging context
       users = User.where(device_token: token)
       user_ids = users.pluck(:id).join(', ')
-
       if users.count > 1
-        Rails.logger.warn("Duplicate FCM token #{token} found for user IDs: #{user_ids}")
+        Rails.logger.warn("Duplicate FCM token #{token} for user IDs: #{user_ids}")
         users.each { |user| user.update(device_token: nil) }
         next
       end
@@ -94,6 +88,31 @@ class NotificationService
     nil
   end
 
+  def self.send_whatsapp_notification(to_numbers, template_name, template_data, content_sid)
+    return if to_numbers.empty?
+
+    client = Twilio::REST::Client.new(ENV['TWILIO_ACCOUNT_SID'], ENV['TWILIO_AUTH_TOKEN'])
+    from_number = ENV['TWILIO_WHATSAPP_NUMBER'] || 'whatsapp:+14155238886'
+
+    responses = []
+    to_numbers.each do |number, user_id|
+      begin
+        response = client.messages.create(
+          from: from_number,
+          to: "whatsapp:#{number}",
+          content_sid: content_sid,
+          content_variables: template_data.to_json
+        )
+        Rails.logger.info("WhatsApp notification sent to #{number}: SID #{response.sid}")
+        responses << response
+      rescue Twilio::REST::RestError => e
+        Rails.logger.error("WhatsApp notification failed for #{number}: #{e.message} (Code: #{e.code})")
+        handle_twilio_error(e, number, user_id)
+      end
+    end
+    responses
+  end
+
   def self.send_new_movie_notification(movie)
     send_movie_notification(movie, "New Movie Added", "is now available", "movie_added")
   end
@@ -108,125 +127,280 @@ class NotificationService
   end
 
   def self.send_subscription_notification(user, plan_type)
-    return unless user.device_token
+    # FCM
+    if user.device_token
+      unless SentNotification.exists?(
+        user_id: user.id,
+        notification_type: 'subscription',
+        action: 'subscription_activated',
+        channel: 'fcm'
+      )
+        response = send_fcm_notification(
+          [user.device_token],
+          "Subscription Activated!",
+          "Your #{plan_type.capitalize} subscription has been successfully activated.",
+          {
+            plan_type: plan_type,
+            subscription_id: user.subscription&.stripe_subscription_id || '',
+            action: 'subscription_activated',
+            notification_type: 'subscription'
+          }
+        )
+        if response&.any?(&:success?)
+          SentNotification.create!(
+            user_id: user.id,
+            notification_type: 'subscription',
+            action: 'subscription_activated',
+            channel: 'fcm',
+            sent_at: Time.current
+          )
+        end
+      end
+    end
 
-    cache_key = "notification:subscription_activated:#{user.id}:#{plan_type}:#{Time.current.to_i / 3600}"
-    return if Rails.cache.exist?(cache_key)
-
-    response = send_fcm_notification(
-      [user.device_token],
-      "Subscription Activated!",
-      "Your #{plan_type.capitalize} subscription has been successfully activated.",
-      {
-        plan_type: plan_type,
-        subscription_id: user.subscription&.stripe_subscription_id || '',
-        action: "subscription_activated",
-        notification_type: "subscription"
-      }
-    )
-
-    if response&.any?(&:success?)
-      Rails.cache.write(cache_key, true, expires_in: 1.hour)
-      Rails.logger.info("Subscription notification sent for user ID: #{user.id}, plan: #{plan_type}")
-    else
-      Rails.logger.error("Failed to send subscription notification for user ID: #{user.id}")
+    # WhatsApp
+    if user.mobile_number
+      unless SentNotification.exists?(
+        user_id: user.id,
+        notification_type: 'subscription',
+        action: 'subscription_activated',
+        channel: 'whatsapp'
+      )
+        template_data = {
+          '1' => plan_type.capitalize,
+          '2' => user.subscription&.stripe_subscription_id || 'N/A',
+          'action' => 'subscription_activated'
+        }
+        response = send_whatsapp_notification(
+          { user.mobile_number => user.id },
+          'subscription_notification',
+          template_data,
+          ENV['TWILIO_SUBSCRIPTION_CONTENT_SID']
+        )
+        if response&.any? { |r| r.status == 'sent' || r.status == 'queued' }
+          SentNotification.create!(
+            user_id: user.id,
+            notification_type: 'subscription',
+            action: 'subscription_activated',
+            channel: 'whatsapp',
+            sent_at: Time.current
+          )
+        end
+      end
     end
   end
 
   def self.send_payment_failure_notification(user)
-    return unless user.device_token
+    # FCM
+    if user.device_token
+      unless SentNotification.exists?(
+        user_id: user.id,
+        notification_type: 'payment',
+        action: 'payment_failed',
+        channel: 'fcm'
+      )
+        response = send_fcm_notification(
+          [user.device_token],
+          "Payment Failed",
+          "There was an issue with your subscription payment. Please update your payment method.",
+          {
+            type: 'payment_failure',
+            action: 'payment_failed',
+            notification_type: 'payment'
+          }
+        )
+        if response&.any?(&:success?)
+          SentNotification.create!(
+            user_id: user.id,
+            notification_type: 'payment',
+            action: 'payment_failed',
+            channel: 'fcm',
+            sent_at: Time.current
+          )
+        end
+      end
+    end
 
-    cache_key = "notification:payment_failure:#{user.id}:#{Time.current.to_i / 3600}"
-    return if Rails.cache.exist?(cache_key)
-
-    response = send_fcm_notification(
-      [user.device_token],
-      "Payment Failed",
-      "There was an issue with your subscription payment. Please update your payment method.",
-      {
-        type: "payment_failure",
-        action: "payment_failed",
-        notification_type: "payment"
-      }
-    )
-
-    if response&.any?(&:success?)
-      Rails.cache.write(cache_key, true, expires_in: 1.hour)
-      Rails.logger.info("Payment failure notification sent for user ID: #{user.id}")
-    else
-      Rails.logger.error("Failed to send payment failure notification for user ID: #{user.id}")
+    # WhatsApp
+    if user.mobile_number
+      unless SentNotification.exists?(
+        user_id: user.id,
+        notification_type: 'payment',
+        action: 'payment_failed',
+        channel: 'whatsapp'
+      )
+        template_data = {
+          '1' => 'Please update your payment method',
+          'action' => 'payment_failed'
+        }
+        response = send_whatsapp_notification(
+          { user.mobile_number => user.id },
+          'payment_failure_notification',
+          template_data,
+          ENV['TWILIO_PAYMENT_FAILURE_CONTENT_SID']
+        )
+        if response&.any? { |r| r.status == 'sent' || r.status == 'queued' }
+          SentNotification.create!(
+            user_id: user.id,
+            notification_type: 'payment',
+            action: 'payment_failed',
+            channel: 'whatsapp',
+            sent_at: Time.current
+          )
+        end
+      end
     end
   end
 
   def self.send_cancellation_notification(user)
-    return unless user.device_token
+    # FCM
+    if user.device_token
+      unless SentNotification.exists?(
+        user_id: user.id,
+        notification_type: 'subscription',
+        action: 'subscription_cancelled',
+        channel: 'fcm'
+      )
+        response = send_fcm_notification(
+          [user.device_token],
+          "Subscription Cancelled",
+          "Your subscription has been cancelled. You are now on the free plan.",
+          {
+            type: 'subscription_cancellation',
+            action: 'subscription_cancelled',
+            notification_type: 'subscription'
+          }
+        )
+        if response&.any?(&:success?)
+          SentNotification.create!(
+            user_id: user.id,
+            notification_type: 'subscription',
+            action: 'subscription_cancelled',
+            channel: 'fcm',
+            sent_at: Time.current
+          )
+        end
+      end
+    end
 
-    cache_key = "notification:subscription_cancelled:#{user.id}:#{Time.current.to_i / 3600}"
-    return if Rails.cache.exist?(cache_key)
-
-    response = send_fcm_notification(
-      [user.device_token],
-      "Subscription Cancelled",
-      "Your subscription has been cancelled. You are now on the free plan.",
-      {
-        type: "subscription_cancellation",
-        action: "subscription_cancelled",
-        notification_type: "subscription"
-      }
-    )
-
-    if response&.any?(&:success?)
-      Rails.cache.write(cache_key, true, expires_in: 1.hour)
-      Rails.logger.info("Cancellation notification sent for user ID: #{user.id}")
-    else
-      Rails.logger.error("Failed to send cancellation notification for user ID: #{user.id}")
+    # WhatsApp
+    if user.mobile_number
+      unless SentNotification.exists?(
+        user_id: user.id,
+        notification_type: 'subscription',
+        action: 'subscription_cancelled',
+        channel: 'whatsapp'
+      )
+        template_data = {
+          '1' => 'You are now on the free plan',
+          'action' => 'subscription_cancelled'
+        }
+        response = send_whatsapp_notification(
+          { user.mobile_number => user.id },
+          'cancellation_notification',
+          template_data,
+          ENV['TWILIO_CANCELLATION_CONTENT_SID']
+        )
+        if response&.any? { |r| r.status == 'sent' || r.status == 'queued' }
+          SentNotification.create!(
+            user_id: user.id,
+            notification_type: 'subscription',
+            action: 'subscription_cancelled',
+            channel: 'whatsapp',
+            sent_at: Time.current
+          )
+        end
+      end
     end
   end
 
   private
 
-  def self.send_movie_notification(movie, title_prefix, body_action, event_type)
-    cache_key = "notification:#{event_type}:#{movie.id}"
-    return if Rails.cache.exist?(cache_key)
+  def self.send_movie_notification(movie, title_prefix, body_action, action)
+    users = movie.premium? ? User.with_active_subscription : User.all
+    device_tokens = users.where.not(device_token: nil).pluck(:device_token, :id).to_h
+    mobile_numbers = users.where.not(mobile_number: nil).pluck(:mobile_number, :id).to_h
 
-    # Select all users regardless of premium status
-    users = User.all
-    device_tokens = users.where.not(device_token: nil).pluck(:device_token).uniq
+    return if device_tokens.empty? && mobile_numbers.empty?
 
-    # Log detailed information if no eligible users are found
-    if device_tokens.empty?
-      Rails.logger.info(
-        "No eligible users for #{title_prefix} notification for movie #{movie.id}. " +
-        "Premium: #{movie.premium}, " +
-        "Total users: #{User.count}, " +
-        "Users with device tokens: #{User.where.not(device_token: nil).count}, " +
-        "Device tokens: #{device_tokens.inspect}"
-      )
-      return
-    end
-
-    base_url = ENV['APP_BASE_URL'] || 'http://localhost:3000'
+    base_url = ENV['APP_BASE_URL'] || 'https://yourapp.com'
     movie_url = "#{base_url}/movies/#{movie.id}"
 
-    response = send_fcm_notification(
-      device_tokens,
-      title_prefix,
-      "#{movie.title} #{body_action}!",
-      {
-        movie_id: movie.id.to_s,
-        title: movie.title,
-        premium: movie.premium.to_s,
-        action: event_type,
-        notification_type: "movie",
-        url: movie_url
-      }
-    )
+    # FCM notifications
+    device_tokens.each_slice(500) do |token_batch|
+      token_batch.each do |token, user_id|
+        next if SentNotification.exists?(
+          user_id: user_id,
+          movie_id: movie.id,
+          notification_type: 'movie',
+          action: action,
+          channel: 'fcm'
+        )
 
-    if response&.any?(&:success?)
-      Rails.cache.write(cache_key, true, expires_in: 1.hour)
-      Rails.logger.info("Sent #{title_prefix} notification for movie #{movie.id} to #{device_tokens.size} users")
-    else
-      Rails.logger.error("Failed to send #{title_prefix} notification for movie #{movie.id}")
+        response = send_fcm_notification(
+          [token],
+          title_prefix,
+          "#{movie.title} #{body_action}#{movie.premium? ? ' for premium users' : ''}!",
+          {
+            movie_id: movie.id.to_s,
+            title: movie.title,
+            premium: movie.premium.to_s,
+            action: action,
+            notification_type: 'movie',
+            url: movie_url
+          }
+        )
+
+        if response&.any?(&:success?)
+          SentNotification.create!(
+            user_id: user_id,
+            movie_id: movie.id,
+            notification_type: 'movie',
+            action: action,
+            channel: 'fcm',
+            sent_at: Time.current
+          )
+        end
+      end
+    end
+
+    # WhatsApp notifications
+    mobile_numbers.each_slice(500) do |number_batch|
+      number_batch.each do |number, user_id|
+        next if SentNotification.exists?(
+          user_id: user_id,
+          movie_id: movie.id,
+          notification_type: 'movie',
+          action: action,
+          channel: 'whatsapp'
+        )
+
+        template_data = {
+          '1' => movie.title,
+          '2' => body_action + (movie.premium? ? ' for premium users' : ''),
+          '3' => movie_url,
+          'movie_id' => movie.id.to_s,
+          'action' => action
+        }
+
+        response = send_whatsapp_notification(
+          { number => user_id },
+          'movie_notification',
+          template_data,
+          ENV['TWILIO_MOVIE_CONTENT_SID']
+        )
+
+        if response&.any? { |r| r.status == 'sent' || r.status == 'queued' }
+          SentNotification.create!(
+            user_id: user_id,
+            movie_id: movie.id,
+            notification_type: 'movie',
+            action: action,
+            channel: 'whatsapp',
+            sent_at: Time.current
+          )
+        end
+      end
     end
   end
 
@@ -239,20 +413,33 @@ class NotificationService
       fcm_error_code = response.parsed_response.dig('error', 'details')&.find { |d| d['@type'] == 'type.googleapis.com/google.firebase.fcm.v1.FcmError' }&.dig('errorCode')
       token = tokens[index]
 
-      # Find user(s) associated with the token for logging context
       users = User.where(device_token: token)
       user_ids = users.pluck(:id).join(', ')
-
       Rails.logger.warn("FCM error for token #{token}, user IDs: #{user_ids}: #{error_code} - #{error_message}#{fcm_error_code ? " (FCM errorCode: #{fcm_error_code})" : ''}")
 
       if fcm_error_code == 'UNREGISTERED' || error_message&.include?('NotRegistered') || error_message&.include?('InvalidRegistration')
         users.each do |user|
           Rails.logger.info("Removed invalid FCM token: #{token} for user ID: #{user.id}")
           user.update(device_token: nil)
-          # Increment a counter for monitoring
-          Rails.cache.increment("fcm_invalid_token_count")
+          Rails.cache.increment('fcm_invalid_token_count')
         end
       end
+    end
+  end
+
+  def self.handle_twilio_error(error, number, user_id)
+    case error.code
+    when 63003
+      Rails.logger.warn("Number #{number} is not WhatsApp-enabled; removing for user #{user_id}")
+      User.where(id: user_id).update_all(mobile_number: nil)
+    when 63018
+      Rails.logger.warn("Rate limit hit for #{number}: #{error.message}")
+    when 63020
+      Rails.logger.warn("Invitation not accepted in Meta Business Manager for #{number}")
+    when 63016
+      Rails.logger.warn("Attempted to send free-form message outside 24-hour session for #{number}")
+    else
+      Rails.logger.error("Unhandled Twilio error for #{number}: #{error.message} (Code: #{error.code})")
     end
   end
 end

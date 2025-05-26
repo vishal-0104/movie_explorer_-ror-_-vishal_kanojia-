@@ -8,7 +8,7 @@ class User < ApplicationRecord
   validates :first_name, presence: true, length: { maximum: 100 }
   validates :last_name, presence: true, length: { maximum: 100 }
   validates :email, presence: true, uniqueness: { case_sensitive: false }, format: { with: URI::MailTo::EMAIL_REGEXP }
-  validates :mobile_number, presence: true, uniqueness: true, format: { with: /\A(\+?[1-9]\d{0,3})?\d{9,14}\z/ }
+  validates :mobile_number, presence: true, uniqueness: true, format: { with: /\A\+[1-9]\d{9,14}\z/, message: "must be in E.164 format (e.g., +12345678901)" }
   validates :device_token, uniqueness: true, allow_nil: true
   validates :jti, presence: true, uniqueness: true
   validates :profile_picture, content_type: ['image/png', 'image/jpeg'], size: { less_than: 5.megabytes }, allow_nil: true

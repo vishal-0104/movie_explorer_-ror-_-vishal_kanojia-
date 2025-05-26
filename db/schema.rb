@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2025_05_14_063414) do
+ActiveRecord::Schema[7.2].define(version: 2025_05_26_055049) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -98,6 +98,19 @@ ActiveRecord::Schema[7.2].define(version: 2025_05_14_063414) do
     t.index ["title"], name: "index_movies_on_title"
   end
 
+  create_table "sent_notifications", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.integer "movie_id"
+    t.string "notification_type"
+    t.string "action"
+    t.string "channel"
+    t.datetime "sent_at", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["user_id", "movie_id", "notification_type", "channel"], name: "index_sent_notifications_unique", unique: true
+    t.index ["user_id"], name: "index_sent_notifications_on_user_id"
+  end
+
   create_table "subscriptions", force: :cascade do |t|
     t.bigint "user_id", null: false
     t.string "plan_type", null: false
@@ -133,5 +146,6 @@ ActiveRecord::Schema[7.2].define(version: 2025_05_14_063414) do
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
   add_foreign_key "blacklisted_tokens", "users"
+  add_foreign_key "sent_notifications", "users"
   add_foreign_key "subscriptions", "users"
 end

@@ -70,6 +70,7 @@ gem "sassc-embedded", "~> 1.77"             # Required for ActiveAdmin
 gem 'stripe'
 gem 'fcm'
 gem 'httparty'
+gem 'twilio-ruby'
 
 gem 'rswag'
 group :development, :test do
