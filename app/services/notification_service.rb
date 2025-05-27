@@ -113,6 +113,39 @@ class NotificationService
     responses
   end
 
+  def self.send_whatsapp_opt_in_confirmation(mobile_number, user_id)
+    return unless mobile_number.present?
+
+    template_data = {}
+    response = send_whatsapp_notification(
+      { mobile_number => user_id },
+      'whatsapp_opt_in_confirmation',
+      template_data,
+      ENV['TWILIO_OPT_IN_CONFIRMATION_CONTENT_SID']
+    )
+    if response&.any? { |r| r.status == 'sent' || r.status == 'queued' }
+      Rails.logger.info("WhatsApp opt-in confirmation sent to #{mobile_number} for user #{user_id}")
+    end
+  end
+
+  def self.send_whatsapp_opt_in_sms(mobile_number, user_id)
+    return unless ENV['TWILIO_PHONE_NUMBER'].present? && mobile_number.present?
+
+    client = Twilio::REST::Client.new(ENV['TWILIO_ACCOUNT_SID'], ENV['TWILIO_AUTH_TOKEN'])
+    join_link = 'https://wa.me/+14155238886?text=join%20welcome-coat'
+    message = "Welcome to YourApp! Enable WhatsApp notifications by clicking: #{join_link}"
+    begin
+      client.messages.create(
+        from: ENV['TWILIO_PHONE_NUMBER'],
+        to: mobile_number,
+        body: message
+      )
+      Rails.logger.info("Sent WhatsApp opt-in SMS to #{mobile_number} for user #{user_id}")
+    rescue Twilio::REST::RestError => e
+      Rails.logger.error("Failed to send WhatsApp opt-in SMS to #{mobile_number}: #{e.message} (Code: #{e.code})")
+    end
+  end
+
   def self.send_new_movie_notification(movie)
     send_movie_notification(movie, "New Movie Added", "is now available", "movie_added")
   end
@@ -158,7 +191,6 @@ class NotificationService
       end
     end
 
-    # WhatsApp
     if user.mobile_number
       unless SentNotification.exists?(
         user_id: user.id,
@@ -191,7 +223,6 @@ class NotificationService
   end
 
   def self.send_payment_failure_notification(user)
-    # FCM
     if user.device_token
       unless SentNotification.exists?(
         user_id: user.id,
@@ -221,7 +252,6 @@ class NotificationService
       end
     end
 
-    # WhatsApp
     if user.mobile_number
       unless SentNotification.exists?(
         user_id: user.id,
@@ -253,7 +283,6 @@ class NotificationService
   end
 
   def self.send_cancellation_notification(user)
-    # FCM
     if user.device_token
       unless SentNotification.exists?(
         user_id: user.id,
@@ -283,7 +312,6 @@ class NotificationService
       end
     end
 
-    # WhatsApp
     if user.mobile_number
       unless SentNotification.exists?(
         user_id: user.id,
@@ -326,7 +354,6 @@ class NotificationService
     base_url = ENV['APP_BASE_URL'] || 'https://yourapp.com'
     movie_url = "#{base_url}/movies/#{movie.id}"
 
-    # FCM notifications
     device_tokens.each_slice(500) do |token_batch|
       token_batch.each do |token, user_id|
         next if SentNotification.exists?(
@@ -364,7 +391,6 @@ class NotificationService
       end
     end
 
-    # WhatsApp notifications
     mobile_numbers.each_slice(500) do |number_batch|
       number_batch.each do |number, user_id|
         next if SentNotification.exists?(

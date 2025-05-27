@@ -14,7 +14,7 @@ class User < ApplicationRecord
   validates :profile_picture, content_type: ['image/png', 'image/jpeg'], size: { less_than: 5.megabytes }, allow_nil: true
   before_save { self.email = email.downcase }
 
-  validate :whatsapp_enabled, if: -> { mobile_number.present? }
+  validate :mobile_number_valid, if: -> { mobile_number.present? }
 
 
   has_one_attached :profile_picture
@@ -68,18 +68,18 @@ class User < ApplicationRecord
     )
   end
 
-  def whatsapp_enabled
+  def mobile_number_valid
     return if Rails.env.test?
 
     client = Twilio::REST::Client.new(ENV['TWILIO_ACCOUNT_SID'], ENV['TWILIO_AUTH_TOKEN'])
     begin
-      lookup = client.lookups.v2.phone_numbers(mobile_number).fetch(fields: 'whatsapp')
-      unless lookup.whatsapp&.dig('reachable')
-        errors.add(:mobile_number, 'is not WhatsApp-enabled')
+      lookup = client.lookups.v2.phone_numbers(mobile_number).fetch(fields: 'validation')
+      unless lookup.valid
+        errors.add(:mobile_number, 'is not a valid phone number')
       end
     rescue Twilio::REST::RestError => e
-      Rails.logger.error("WhatsApp lookup failed for #{mobile_number}: #{e.message} (Code: #{e.code})")
-      errors.add(:mobile_number, 'could not be verified for WhatsApp')
+      Rails.logger.error("Phone number lookup failed for #{mobile_number}: #{e.message} (Code: #{e.code})")
+      Rails.logger.warn("Proceeding with registration for #{mobile_number} despite lookup failure")
     end
   end
 end
