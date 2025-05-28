@@ -50,46 +50,50 @@ class Api::V1::SubscriptionsController < ApplicationController
   end
 
   def cancel
+  subscription = @current_user.subscription
+  unless subscription
+    create_free_subscription
     subscription = @current_user.subscription
-    unless subscription
-      create_free_subscription
-      subscription = @current_user.subscription
-      return render json: {
-        message: "No subscription found. Set to free plan.",
-        plan: subscription.plan_type,
-        status: subscription.status,
-        current_period_end: subscription.end_date
-      }, status: :ok
+    return render json: {
+      message: "No subscription found. Set to free plan.",
+      plan: subscription.plan_type,
+      status: subscription.status,
+      current_period_end: subscription.end_date
+    }, status: :ok
+  end
+
+  unless subscription.active? || subscription.past_due?
+    return render json: {
+      error: "No active or past due subscription to cancel",
+      errors: ["Subscription is #{subscription.status}"]
+    }, status: :bad_request
+  end
+
+  begin
+    if subscription.stripe_subscription_id && subscription.plan_type != "free"
+      Rails.logger.info "Cancelling subscription with PaymentIntent ID: #{subscription.stripe_subscription_id}"
     end
 
-    unless subscription.active? || subscription.past_due?
-      return render json: {
-        error: "No active or past due subscription to cancel",
-        errors: ["Subscription is #{subscription.status}"]
-      }, status: :bad_request
+    subscription.update!(status: "cancelled")
+    if @current_user.device_token || @current_user.mobile_number
+      NotificationService.send_cancellation_notification(@current_user)
+    else
+      Rails.logger.info("No device token or mobile number for user #{@current_user.id}; skipping cancellation notification")
     end
 
-    begin
-      if subscription.stripe_subscription_id && subscription.plan_type != "free"
-        Rails.logger.info "Cancelling subscription with PaymentIntent ID: #{subscription.stripe_subscription_id}"
-      end
-
-      subscription.update!(status: "cancelled")
-      NotificationService.send_cancellation_notification(@current_user) if @current_user.device_token || @current_user.mobile_number
-
-      render json: {
-        message: "Subscription cancelled successfully. You will revert to the free plan after #{subscription.end_date}.",
-        plan: subscription.plan_type,
-        status: subscription.status,
-        current_period_end: subscription.end_date
-      }, status: :ok
-    rescue Stripe::StripeError => e
-      Rails.logger.error "Stripe error during cancellation: #{e.message}"
-      render json: { error: "Cancellation failed", errors: [e.message] }, status: :unprocessable_entity
-    rescue StandardError => e
-      Rails.logger.error "Error during cancellation: #{e.message}"
-      render json: { error: "Cancellation failed", errors: [e.message] }, status: :unprocessable_entity
-    end
+    render json: {
+      message: "Subscription cancelled successfully. You will revert to the free plan after #{subscription.end_date}.",
+      plan: subscription.plan_type,
+      status: subscription.status,
+      current_period_end: subscription.end_date
+    }, status: :ok
+  rescue Stripe::StripeError => e
+    Rails.logger.error "Stripe error during cancellation: #{e.message}"
+    render json: { error: "Cancellation failed", errors: [e.message] }, status: :unprocessable_entity
+  rescue StandardError => e
+    Rails.logger.error "Error during cancellation: #{e.message}"
+    render json: { error: "Cancellation failed", errors: [e.message] }, status: :unprocessable_entity
+  end
   end
 
   def confirm

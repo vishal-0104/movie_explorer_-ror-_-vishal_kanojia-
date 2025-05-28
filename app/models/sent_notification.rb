@@ -7,5 +7,8 @@ class SentNotification < ApplicationRecord
   validates :channel, presence: true, inclusion: { in: %w[fcm whatsapp] }
   validates :sent_at, presence: true
 
-  validates :user_id, uniqueness: { scope: [:movie_id, :notification_type, :channel], message: "Notification already sent for this user, movie, type, and channel" }
+  validates :user_id, uniqueness: { 
+    scope: [:movie_id, :notification_type, :channel, :action], 
+    message: "Notification already sent for this user, movie, type, channel, and action" 
+  }
 end

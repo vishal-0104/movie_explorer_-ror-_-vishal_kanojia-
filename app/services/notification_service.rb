@@ -69,7 +69,12 @@ class NotificationService
         channel: 'fcm',
         movie_id: data[:movie_id]&.to_i
       }
-      next if SentNotification.exists?(notification_params)
+
+      # Skip if notification already exists
+      if SentNotification.exists?(notification_params)
+        Rails.logger.info("Skipping FCM notification for token: #{token}, user ID: #{user.id} - Notification already sent")
+        next
+      end
 
       payload = {
         message: {
@@ -88,9 +93,7 @@ class NotificationService
       if response.success?
         Rails.logger.info("FCM notification sent to token: #{token}, user IDs: #{user_ids}, title: #{title}")
         user.with_lock do
-          unless SentNotification.exists?(notification_params)
-            SentNotification.create!(notification_params.merge(sent_at: Time.current))
-          end
+          SentNotification.create!(notification_params.merge(sent_at: Time.current))
         end
       else
         Rails.logger.error("FCM notification failed for token: #{token}, user IDs: #{user_ids}, status: #{response.code}, body: #{response.body}")
@@ -123,7 +126,12 @@ class NotificationService
         channel: 'whatsapp',
         movie_id: template_data['movie_id']&.to_i
       }
-      next if SentNotification.exists?(notification_params)
+
+      # Skip if notification already exists
+      if SentNotification.exists?(notification_params)
+        Rails.logger.info("Skipping WhatsApp notification for number: #{number}, user ID: #{user_id} - Notification already sent")
+        next
+      end
 
       begin
         response = client.messages.create(
@@ -134,9 +142,7 @@ class NotificationService
         )
         Rails.logger.info("WhatsApp notification sent to #{number}: SID #{response.sid}")
         user.with_lock do
-          unless SentNotification.exists?(notification_params)
-            SentNotification.create!(notification_params.merge(sent_at: Time.current))
-          end
+          SentNotification.create!(notification_params.merge(sent_at: Time.current))
         end
         responses << response
       rescue Twilio::REST::RestError => e
@@ -162,7 +168,12 @@ class NotificationService
       action: 'whatsapp_opt_in',
       channel: 'whatsapp'
     }
-    return if SentNotification.exists?(notification_params)
+
+    # Skip if notification already exists
+    if SentNotification.exists?(notification_params)
+      Rails.logger.info("Skipping WhatsApp opt-in SMS for number: #{mobile_number}, user ID: #{user_id} - Notification already sent")
+      return
+    end
 
     template_data = {
       '1' => 'Please reply with "YES" to opt in to WhatsApp notifications.',
@@ -179,9 +190,7 @@ class NotificationService
       )
       Rails.logger.info("WhatsApp opt-in SMS sent to #{mobile_number}: SID #{response.sid}")
       user.with_lock do
-        unless SentNotification.exists?(notification_params)
-          SentNotification.create!(notification_params.merge(sent_at: Time.current))
-        end
+        SentNotification.create!(notification_params.merge(sent_at: Time.current))
       end
       response
     rescue Twilio::REST::RestError => e
@@ -229,7 +238,6 @@ class NotificationService
     notification_type = 'payment'
     action = 'payment_failed'
 
-
     if user.device_token
       send_fcm_notification(
         [user.device_token],
@@ -242,7 +250,6 @@ class NotificationService
         }
       )
     end
-
 
     if user.mobile_number
       template_data = {
@@ -263,7 +270,6 @@ class NotificationService
     notification_type = 'subscription'
     action = 'subscription_cancelled'
 
-
     if user.device_token
       send_fcm_notification(
         [user.device_token],
@@ -276,7 +282,6 @@ class NotificationService
         }
       )
     end
-
 
     if user.mobile_number
       template_data = {
