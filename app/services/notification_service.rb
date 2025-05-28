@@ -59,6 +59,19 @@ class NotificationService
         next
       end
 
+      user = users.first
+      next unless user
+
+      # Check for existing notification to prevent duplicates
+      notification_params = {
+        user_id: user.id,
+        notification_type: data[:notification_type],
+        action: data[:action],
+        channel: 'fcm',
+        movie_id: data[:movie_id]&.to_i
+      }
+      next if SentNotification.exists?(notification_params)
+
       payload = {
         message: {
           token: token,
@@ -75,6 +88,12 @@ class NotificationService
 
       if response.success?
         Rails.logger.info("FCM notification sent to token: #{token}, user IDs: #{user_ids}, title: #{title}")
+        # Create SentNotification record within a transaction to prevent race conditions
+        user.with_lock do
+          unless SentNotification.exists?(notification_params)
+            SentNotification.create!(notification_params.merge(sent_at: Time.current))
+          end
+        end
       else
         Rails.logger.error("FCM notification failed for token: #{token}, user IDs: #{user_ids}, status: #{response.code}, body: #{response.body}")
       end
@@ -96,6 +115,19 @@ class NotificationService
 
     responses = []
     to_numbers.each do |number, user_id|
+      user = User.find_by(id: user_id)
+      next unless user
+
+      # Check for existing notification to prevent duplicates
+      notification_params = {
+        user_id: user_id,
+        notification_type: template_data['notification_type'] || template_name,
+        action: template_data['action'],
+        channel: 'whatsapp',
+        movie_id: template_data['movie_id']&.to_i
+      }
+      next if SentNotification.exists?(notification_params)
+
       begin
         response = client.messages.create(
           from: from_number,
@@ -104,6 +136,12 @@ class NotificationService
           content_variables: template_data.to_json
         )
         Rails.logger.info("WhatsApp notification sent to #{number}: SID #{response.sid}")
+        # Create SentNotification record within a transaction
+        user.with_lock do
+          unless SentNotification.exists?(notification_params)
+            SentNotification.create!(notification_params.merge(sent_at: Time.current))
+          end
+        end
         responses << response
       rescue Twilio::REST::RestError => e
         Rails.logger.error("WhatsApp notification failed for #{number}: #{e.message} (Code: #{e.code})")
@@ -113,36 +151,107 @@ class NotificationService
     responses
   end
 
-  def self.send_whatsapp_opt_in_confirmation(mobile_number, user_id)
-    return unless mobile_number.present?
+  def self.send_subscription_notification(user, plan_type)
+    notification_type = 'subscription'
+    action = 'subscription_activated'
 
-    template_data = {}
-    response = send_whatsapp_notification(
-      { mobile_number => user_id },
-      'whatsapp_opt_in_confirmation',
-      template_data,
-      ENV['TWILIO_OPT_IN_CONFIRMATION_CONTENT_SID']
-    )
-    if response&.any? { |r| r.status == 'sent' || r.status == 'queued' }
-      Rails.logger.info("WhatsApp opt-in confirmation sent to #{mobile_number} for user #{user_id}")
+    # FCM notification
+    if user.device_token
+      send_fcm_notification(
+        [user.device_token],
+        "Subscription Activated!",
+        "Your #{plan_type.capitalize} subscription has been successfully activated.",
+        {
+          plan_type: plan_type,
+          subscription_id: user.subscription&.stripe_subscription_id || '',
+          action: action,
+          notification_type: notification_type
+        }
+      )
+    end
+
+    # WhatsApp notification
+    if user.mobile_number
+      template_data = {
+        '1' => plan_type.capitalize,
+        '2' => user.subscription&.stripe_subscription_id || 'N/A',
+        'action' => action,
+        'notification_type' => notification_type
+      }
+      send_whatsapp_notification(
+        { user.mobile_number => user.id },
+        'subscription_notification',
+        template_data,
+        ENV['TWILIO_SUBSCRIPTION_CONTENT_SID']
+      )
     end
   end
 
-  def self.send_whatsapp_opt_in_sms(mobile_number, user_id)
-    return unless ENV['TWILIO_PHONE_NUMBER'].present? && mobile_number.present?
+  def self.send_payment_failure_notification(user)
+    notification_type = 'payment'
+    action = 'payment_failed'
 
-    client = Twilio::REST::Client.new(ENV['TWILIO_ACCOUNT_SID'], ENV['TWILIO_AUTH_TOKEN'])
-    join_link = 'https://wa.me/+14155238886?text=join%20welcome-coat'
-    message = "Welcome to YourApp! Enable WhatsApp notifications by clicking: #{join_link}"
-    begin
-      client.messages.create(
-        from: ENV['TWILIO_PHONE_NUMBER'],
-        to: mobile_number,
-        body: message
+    # FCM notification
+    if user.device_token
+      send_fcm_notification(
+        [user.device_token],
+        "Payment Failed",
+        "There was an issue with your subscription payment. Please update your payment method.",
+        {
+          type: 'payment_failure',
+          action: action,
+          notification_type: notification_type
+        }
       )
-      Rails.logger.info("Sent WhatsApp opt-in SMS to #{mobile_number} for user #{user_id}")
-    rescue Twilio::REST::RestError => e
-      Rails.logger.error("Failed to send WhatsApp opt-in SMS to #{mobile_number}: #{e.message} (Code: #{e.code})")
+    end
+
+    # WhatsApp notification
+    if user.mobile_number
+      template_data = {
+        '1' => 'Please update your payment method',
+        'action' => action,
+        'notification_type' => notification_type
+      }
+      send_whatsapp_notification(
+        { user.mobile_number => user.id },
+        'payment_failure_notification',
+        template_data,
+        ENV['TWILIO_PAYMENT_FAILURE_CONTENT_SID']
+      )
+    end
+  end
+
+  def self.send_cancellation_notification(user)
+    notification_type = 'subscription'
+    action = 'subscription_cancelled'
+
+    # FCM notification
+    if user.device_token
+      send_fcm_notification(
+        [user.device_token],
+        "Subscription Cancelled",
+        "Your subscription has been cancelled. You are now on the free plan.",
+        {
+          type: 'subscription_cancellation',
+          action: action,
+          notification_type: notification_type
+        }
+      )
+    end
+
+    # WhatsApp notification
+    if user.mobile_number
+      template_data = {
+        '1' => 'You are now on the free plan',
+        'action' => action,
+        'notification_type' => notification_type
+      }
+      send_whatsapp_notification(
+        { user.mobile_number => user.id },
+        'cancellation_notification',
+        template_data,
+        ENV['TWILIO_CANCELLATION_CONTENT_SID']
+      )
     end
   end
 
@@ -159,189 +268,6 @@ class NotificationService
     send_movie_notification(movie, "Movie Removed", "is no longer available", "movie_removed")
   end
 
-  def self.send_subscription_notification(user, plan_type)
-    # FCM
-    if user.device_token
-      unless SentNotification.exists?(
-        user_id: user.id,
-        notification_type: 'subscription',
-        action: 'subscription_activated',
-        channel: 'fcm'
-      )
-        response = send_fcm_notification(
-          [user.device_token],
-          "Subscription Activated!",
-          "Your #{plan_type.capitalize} subscription has been successfully activated.",
-          {
-            plan_type: plan_type,
-            subscription_id: user.subscription&.stripe_subscription_id || '',
-            action: 'subscription_activated',
-            notification_type: 'subscription'
-          }
-        )
-        if response&.any?(&:success?)
-          SentNotification.create!(
-            user_id: user.id,
-            notification_type: 'subscription',
-            action: 'subscription_activated',
-            channel: 'fcm',
-            sent_at: Time.current
-          )
-        end
-      end
-    end
-
-    if user.mobile_number
-      unless SentNotification.exists?(
-        user_id: user.id,
-        notification_type: 'subscription',
-        action: 'subscription_activated',
-        channel: 'whatsapp'
-      )
-        template_data = {
-          '1' => plan_type.capitalize,
-          '2' => user.subscription&.stripe_subscription_id || 'N/A',
-          'action' => 'subscription_activated'
-        }
-        response = send_whatsapp_notification(
-          { user.mobile_number => user.id },
-          'subscription_notification',
-          template_data,
-          ENV['TWILIO_SUBSCRIPTION_CONTENT_SID']
-        )
-        if response&.any? { |r| r.status == 'sent' || r.status == 'queued' }
-          SentNotification.create!(
-            user_id: user.id,
-            notification_type: 'subscription',
-            action: 'subscription_activated',
-            channel: 'whatsapp',
-            sent_at: Time.current
-          )
-        end
-      end
-    end
-  end
-
-  def self.send_payment_failure_notification(user)
-    if user.device_token
-      unless SentNotification.exists?(
-        user_id: user.id,
-        notification_type: 'payment',
-        action: 'payment_failed',
-        channel: 'fcm'
-      )
-        response = send_fcm_notification(
-          [user.device_token],
-          "Payment Failed",
-          "There was an issue with your subscription payment. Please update your payment method.",
-          {
-            type: 'payment_failure',
-            action: 'payment_failed',
-            notification_type: 'payment'
-          }
-        )
-        if response&.any?(&:success?)
-          SentNotification.create!(
-            user_id: user.id,
-            notification_type: 'payment',
-            action: 'payment_failed',
-            channel: 'fcm',
-            sent_at: Time.current
-          )
-        end
-      end
-    end
-
-    if user.mobile_number
-      unless SentNotification.exists?(
-        user_id: user.id,
-        notification_type: 'payment',
-        action: 'payment_failed',
-        channel: 'whatsapp'
-      )
-        template_data = {
-          '1' => 'Please update your payment method',
-          'action' => 'payment_failed'
-        }
-        response = send_whatsapp_notification(
-          { user.mobile_number => user.id },
-          'payment_failure_notification',
-          template_data,
-          ENV['TWILIO_PAYMENT_FAILURE_CONTENT_SID']
-        )
-        if response&.any? { |r| r.status == 'sent' || r.status == 'queued' }
-          SentNotification.create!(
-            user_id: user.id,
-            notification_type: 'payment',
-            action: 'payment_failed',
-            channel: 'whatsapp',
-            sent_at: Time.current
-          )
-        end
-      end
-    end
-  end
-
-  def self.send_cancellation_notification(user)
-    if user.device_token
-      unless SentNotification.exists?(
-        user_id: user.id,
-        notification_type: 'subscription',
-        action: 'subscription_cancelled',
-        channel: 'fcm'
-      )
-        response = send_fcm_notification(
-          [user.device_token],
-          "Subscription Cancelled",
-          "Your subscription has been cancelled. You are now on the free plan.",
-          {
-            type: 'subscription_cancellation',
-            action: 'subscription_cancelled',
-            notification_type: 'subscription'
-          }
-        )
-        if response&.any?(&:success?)
-          SentNotification.create!(
-            user_id: user.id,
-            notification_type: 'subscription',
-            action: 'subscription_cancelled',
-            channel: 'fcm',
-            sent_at: Time.current
-          )
-        end
-      end
-    end
-
-    if user.mobile_number
-      unless SentNotification.exists?(
-        user_id: user.id,
-        notification_type: 'subscription',
-        action: 'subscription_cancelled',
-        channel: 'whatsapp'
-      )
-        template_data = {
-          '1' => 'You are now on the free plan',
-          'action' => 'subscription_cancelled'
-        }
-        response = send_whatsapp_notification(
-          { user.mobile_number => user.id },
-          'cancellation_notification',
-          template_data,
-          ENV['TWILIO_CANCELLATION_CONTENT_SID']
-        )
-        if response&.any? { |r| r.status == 'sent' || r.status == 'queued' }
-          SentNotification.create!(
-            user_id: user.id,
-            notification_type: 'subscription',
-            action: 'subscription_cancelled',
-            channel: 'whatsapp',
-            sent_at: Time.current
-          )
-        end
-      end
-    end
-  end
-
   private
 
   def self.send_movie_notification(movie, title_prefix, body_action, action)
@@ -356,15 +282,7 @@ class NotificationService
 
     device_tokens.each_slice(500) do |token_batch|
       token_batch.each do |token, user_id|
-        next if SentNotification.exists?(
-          user_id: user_id,
-          movie_id: movie.id,
-          notification_type: 'movie',
-          action: action,
-          channel: 'fcm'
-        )
-
-        response = send_fcm_notification(
+        send_fcm_notification(
           [token],
           title_prefix,
           "#{movie.title} #{body_action}#{movie.premium? ? ' for premium users' : ''}!",
@@ -377,55 +295,25 @@ class NotificationService
             url: movie_url
           }
         )
-
-        if response&.any?(&:success?)
-          SentNotification.create!(
-            user_id: user_id,
-            movie_id: movie.id,
-            notification_type: 'movie',
-            action: action,
-            channel: 'fcm',
-            sent_at: Time.current
-          )
-        end
       end
     end
 
     mobile_numbers.each_slice(500) do |number_batch|
       number_batch.each do |number, user_id|
-        next if SentNotification.exists?(
-          user_id: user_id,
-          movie_id: movie.id,
-          notification_type: 'movie',
-          action: action,
-          channel: 'whatsapp'
-        )
-
         template_data = {
           '1' => movie.title,
           '2' => body_action + (movie.premium? ? ' for premium users' : ''),
           '3' => movie_url,
           'movie_id' => movie.id.to_s,
-          'action' => action
+          'action' => action,
+          'notification_type' => 'movie'
         }
-
-        response = send_whatsapp_notification(
+        send_whatsapp_notification(
           { number => user_id },
           'movie_notification',
           template_data,
           ENV['TWILIO_MOVIE_CONTENT_SID']
         )
-
-        if response&.any? { |r| r.status == 'sent' || r.status == 'queued' }
-          SentNotification.create!(
-            user_id: user_id,
-            movie_id: movie.id,
-            notification_type: 'movie',
-            action: action,
-            channel: 'whatsapp',
-            sent_at: Time.current
-          )
-        end
       end
     end
   end

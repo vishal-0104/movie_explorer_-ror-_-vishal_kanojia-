@@ -40,10 +40,11 @@ class User < ApplicationRecord
   end
 
   def premium?
-    subscription&.active? && %w[basic premium].include?(subscription&.plan_type)
+    supervisor? || subscription&.active? && %w[basic premium].include?(subscription&.plan_type)
   end
 
   def can_access_premium_movies?
+    return true if supervisor?
     return false unless subscription
     subscription.premium? && (subscription.active? || (subscription.status == "cancelled" && subscription.end_date && subscription.end_date > Time.current))
   end

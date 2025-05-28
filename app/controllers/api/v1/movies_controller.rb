@@ -14,9 +14,11 @@ class Api::V1::MoviesController < ApplicationController
 
   def show
     movie = Movie.find(params[:id])
-    if movie.premium && !@current_user.can_access_premium_movies?
-      render json: { error: "Premium subscription required to view this movie" }, status: :forbidden
-      return
+    unless @current_user.supervisor? || @current_user.can_access_premium_movies?
+      if movie.premium
+        render json: { error: "Premium subscription required to view this movie" }, status: :forbidden
+        return
+      end
     end
     render json: movie.as_json(methods: [:poster_url, :banner_url]), status: :ok
   rescue ActiveRecord::RecordNotFound

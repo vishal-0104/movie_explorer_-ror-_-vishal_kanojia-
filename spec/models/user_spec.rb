@@ -25,7 +25,6 @@ RSpec.describe User, type: :model do
     it { should_not allow_value('invalid_email').for(:email) }
 
     it { should validate_presence_of(:mobile_number) }
-    it { should validate_uniqueness_of(:mobile_number).case_insensitive }
     it { should allow_value('+12345678901').for(:mobile_number) }
     it { should_not allow_value('12345').for(:mobile_number).with_message('must be in E.164 format (e.g., +12345678901)') }
 
@@ -37,7 +36,17 @@ RSpec.describe User, type: :model do
       let(:user) { build(:user) }
 
       it 'allows valid content type (image/jpeg)' do
-        valid_file = fixture_file_upload('sample.jpg', 'image/jpeg')
+        valid_file = fixture_file_upload(Rails.root.join('spec', 'fixtures', 'files', 'sample.jpg'), 'image/jpeg')
+        user.profile_picture.attach(valid_file)
+        expect(user).to be_valid
+      end
+
+      it 'allows valid content type (image/png)' do
+        valid_file = Rack::Test::UploadedFile.new(
+          StringIO.new(Base64.decode64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfAAAIAAH9A5M4AAAAAElFTkSuQmCC")),
+          'image/png',
+          original_filename: 'sample.png'
+        )
         user.profile_picture.attach(valid_file)
         expect(user).to be_valid
       end
@@ -63,13 +72,62 @@ RSpec.describe User, type: :model do
         expect(user).not_to be_valid
         expect(user.errors[:profile_picture]).to include('file size must be less than 5 MB (current size is 6 MB)')
       end
+
+      it 'allows profile picture to be nil' do
+        user.profile_picture = nil
+        expect(user).to be_valid
+      end
+    end
+
+    describe 'mobile_number_valid validation' do
+      let(:user) { build(:user, mobile_number: '+12345678901') }
+      let(:client) { instance_double(Twilio::REST::Client) }
+      let(:phone_number) { instance_double('Twilio::REST::Lookups::PhoneNumberInstance') }
+      let(:lookups) { double('lookups') }
+      let(:v2) { double('v2') }
+      let(:phone_numbers) { double('phone_numbers') }
+
+      before do
+        allow(ENV).to receive(:[]).with('TWILIO_ACCOUNT_SID').and_return('test')
+        allow(ENV).to receive(:[]).with('TWILIO_AUTH_TOKEN').and_return('test_token')
+        allow(Twilio::REST::Client).to receive(:new).with('test', 'test_token').and_return(client)
+        allow(client).to receive(:lookups).and_return(lookups)
+        allow(lookups).to receive(:v2).and_return(v2)
+        allow(v2).to receive(:phone_numbers).with('+12345678901').and_return(phone_numbers)
+        allow(phone_numbers).to receive(:fetch).with(fields: 'validation').and_return(phone_number)
+      end
+
+      context 'when not in test environment' do
+        before do
+          allow(Rails).to receive(:env).and_return(ActiveSupport::StringInquirer.new('production'))
+        end
+
+        it 'validates mobile number successfully with Twilio' do
+          allow(phone_number).to receive(:valid).and_return(true)
+          expect(user).to be_valid
+        end
+
+        it 'adds error when mobile number is invalid according to Twilio' do
+          allow(phone_number).to receive(:valid).and_return(false)
+          user.valid?
+          expect(user.errors[:mobile_number]).to include('is not a valid phone number')
+        end
+      end
+
+      context 'when in test environment' do
+        it 'skips Twilio validation' do
+          expect(Rails.env.test?).to be true
+          expect(client).not_to receive(:lookups)
+          expect(user).to be_valid
+        end
+      end
     end
   end
 
   describe 'callbacks' do
     it 'downcases the email before save' do
-      user = create(:user, email: 'Test@Email.com')
-      expect(user.email).to eq('test@email.com')
+      user = create(:user, email: 'Test@Example.com')
+      expect(user.email).to eq('test@example.com')
     end
 
     it 'creates a default subscription after creation' do
@@ -79,11 +137,18 @@ RSpec.describe User, type: :model do
       expect(user.subscription.status).to eq('active')
       expect(user.subscription.start_date).to be_within(1.second).of(Time.current)
     end
+
+    it 'does not create a new subscription if one already exists' do
+      user = create(:user)
+      original_subscription = user.subscription
+      user.save
+      expect(user.subscription).to eq(original_subscription)
+    end
   end
 
   describe 'scopes' do
     let!(:active_user) do
-      create(:user).tap do |user|
+      create(:user, mobile_number: '+12345678901').tap do |user|
         user.subscription.update!(
           plan_type: 'premium',
           status: 'active',
@@ -95,7 +160,7 @@ RSpec.describe User, type: :model do
     end
 
     let!(:inactive_user) do
-      create(:user).tap do |user|
+      create(:user, mobile_number: '+12345678902').tap do |user|
         user.subscription.update!(
           plan_type: 'premium',
           status: 'cancelled',
@@ -106,9 +171,22 @@ RSpec.describe User, type: :model do
       end
     end
 
+    let!(:no_end_date_user) do
+      create(:user, mobile_number: '+12345678903').tap do |user|
+        user.subscription.update!(
+          plan_type: 'free',
+          status: 'active',
+          end_date: nil,
+          stripe_customer_id: nil,
+          stripe_subscription_id: nil
+        )
+      end
+    end
+
     it '.with_active_subscription returns only users with active subscriptions' do
       result = User.with_active_subscription
       expect(result).to include(active_user)
+      expect(result).to include(no_end_date_user)
       expect(result).not_to include(inactive_user)
     end
   end
@@ -180,7 +258,7 @@ RSpec.describe User, type: :model do
       end
 
       it 'returns false if no subscription' do
-        user.subscription.destroy
+        user = create(:user, :without_subscription)
         expect(user.premium?).to be false
       end
     end
@@ -197,7 +275,7 @@ RSpec.describe User, type: :model do
         expect(user.can_access_premium_movies?).to be true
       end
 
-      it 'returns true for cancelled subscription with future end_date' do
+      it 'returns true for cancelled premium subscription with future end_date' do
         user.subscription.update!(
           plan_type: 'premium',
           status: 'cancelled',
@@ -208,7 +286,7 @@ RSpec.describe User, type: :model do
         expect(user.can_access_premium_movies?).to be true
       end
 
-      it 'returns false for cancelled subscription with past end_date' do
+      it 'returns false for cancelled premium subscription with past end_date' do
         user.subscription.update!(
           plan_type: 'premium',
           status: 'cancelled',
@@ -219,13 +297,24 @@ RSpec.describe User, type: :model do
         expect(user.can_access_premium_movies?).to be false
       end
 
+      it 'returns true for active basic subscription' do
+        user.subscription.update!(
+          plan_type: 'basic',
+          status: 'active',
+          end_date: 1.month.from_now,
+          stripe_customer_id: "cus_#{SecureRandom.hex(6)}",
+          stripe_subscription_id: "sub_#{SecureRandom.hex(6)}"
+        )
+        expect(user.can_access_premium_movies?).to be true
+      end
+
       it 'returns false for free plan' do
         user.subscription.update!(plan_type: 'free', status: 'active', stripe_subscription_id: nil, stripe_customer_id: nil, end_date: nil)
         expect(user.can_access_premium_movies?).to be false
       end
 
       it 'returns false if no subscription' do
-        user.subscription.destroy
+        user = create(:user, :without_subscription)
         expect(user.can_access_premium_movies?).to be false
       end
     end

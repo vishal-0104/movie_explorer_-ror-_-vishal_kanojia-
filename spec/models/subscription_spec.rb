@@ -231,3 +231,60 @@ RSpec.describe Subscription, type: :model do
     end
   end
 end
+
+
+describe 'validations' do
+    subject { build(:user) }
+
+    it { should validate_presence_of(:first_name) }
+    it { should validate_length_of(:first_name).is_at_most(100) }
+
+    it { should validate_presence_of(:last_name) }
+    it { should validate_length_of(:last_name).is_at_most(100) }
+
+    it { should validate_presence_of(:email) }
+    it { should validate_uniqueness_of(:email).case_insensitive }
+    it { should allow_value('test@example.com').for(:email) }
+    it { should_not allow_value('invalid_email').for(:email) }
+
+    it { should validate_presence_of(:mobile_number) }
+    it { should validate_uniqueness_of(:mobile_number).case_insensitive }
+    it { should allow_value('+12345678901').for(:mobile_number) }
+    it { should_not allow_value('12345').for(:mobile_number).with_message('must be in E.164 format (e.g., +12345678901)') }
+
+    it { should validate_uniqueness_of(:device_token).allow_nil }
+    it { should validate_presence_of(:jti) }
+    it { should validate_uniqueness_of(:jti) }
+
+    describe 'profile_picture validations' do
+      let(:user) { build(:user) }
+
+      it 'allows valid content type (image/jpeg)' do
+        valid_file = fixture_file_upload('sample.jpg', 'image/jpeg')
+        user.profile_picture.attach(valid_file)
+        expect(user).to be_valid
+      end
+
+      it 'rejects invalid content types' do
+        invalid_file = Rack::Test::UploadedFile.new(
+          StringIO.new("%PDF-1.0\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>"),
+          'application/pdf',
+          original_filename: 'invalid.pdf'
+        )
+        user.profile_picture.attach(invalid_file)
+        expect(user).not_to be_valid
+        expect(user.errors[:profile_picture]).to include('has an invalid content type')
+      end
+
+      it 'rejects files larger than 5MB' do
+        large_file = Rack::Test::UploadedFile.new(
+          StringIO.new('a' * 6.megabytes),
+          'image/jpeg',
+          original_filename: 'large.jpg'
+        )
+        user.profile_picture.attach(large_file)
+        expect(user).not_to be_valid
+        expect(user.errors[:profile_picture]).to include('file size must be less than 5 MB (current size is 6 MB)')
+      end
+    end
+  end

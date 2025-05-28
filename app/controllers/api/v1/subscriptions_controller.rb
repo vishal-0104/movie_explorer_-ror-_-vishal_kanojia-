@@ -21,7 +21,7 @@ class Api::V1::SubscriptionsController < ApplicationController
 
     if plan_id == "free"
       subscription.save!
-      NotificationService.send_subscription_notification(@current_user, plan_id) if @current_user.device_token
+      NotificationService.send_subscription_notification(@current_user, plan_id) if @current_user.device_token || @current_user.mobile_number
       return render json: { plan: subscription.plan_type, status: subscription.status, current_period_end: subscription.end_date }, status: :created
     end
 
@@ -75,7 +75,7 @@ class Api::V1::SubscriptionsController < ApplicationController
       end
 
       subscription.update!(status: "cancelled")
-      NotificationService.send_cancellation_notification(@current_user) if @current_user.device_token
+      NotificationService.send_cancellation_notification(@current_user) if @current_user.device_token || @current_user.mobile_number
 
       render json: {
         message: "Subscription cancelled successfully. You will revert to the free plan after #{subscription.end_date}.",
@@ -116,7 +116,7 @@ class Api::V1::SubscriptionsController < ApplicationController
         stripe_subscription_id: payment_intent.id,
         end_date: Time.current + duration
       )
-      NotificationService.send_subscription_notification(@current_user, subscription.plan_type) if @current_user.device_token
+      NotificationService.send_subscription_notification(@current_user, subscription.plan_type) if @current_user.device_token || @current_user.mobile_number
 
       render json: {
         plan: subscription.plan_type,
@@ -145,7 +145,6 @@ class Api::V1::SubscriptionsController < ApplicationController
       subscription.destroy
       create_free_subscription
       subscription = @current_user.subscription
-      NotificationService.send_cancellation_notification(@current_user) if @current_user.device_token
     end
 
     render json: {
@@ -219,7 +218,7 @@ class Api::V1::SubscriptionsController < ApplicationController
       stripe_subscription_id: payment_intent.id,
       end_date: Time.current + duration
     )
-    NotificationService.send_subscription_notification(user, subscription.plan_type) if user.device_token
+    NotificationService.send_subscription_notification(user, subscription.plan_type) if user.device_token || user.mobile_number
   rescue => e
     Rails.logger.error("Error in handle_payment_intent_succeeded: #{e.message}")
   end
@@ -232,7 +231,7 @@ class Api::V1::SubscriptionsController < ApplicationController
     return if subscription.status == "cancelled"
 
     subscription.update!(status: "past_due")
-    NotificationService.send_payment_failure_notification(user) if user.device_token
+    NotificationService.send_payment_failure_notification(user) if user.device_token || user.mobile_number
   rescue => e
     Rails.logger.error("Error in handle_payment_intent_failed: #{e.message}")
   end
@@ -246,7 +245,7 @@ class Api::V1::SubscriptionsController < ApplicationController
     return if subscription.status == "cancelled"
 
     subscription.update!(status: "past_due")
-    NotificationService.send_payment_failure_notification(user) if user.device_token
+    NotificationService.send_payment_failure_notification(user) if user.device_token || user.mobile_number
   rescue => e
     Rails.logger.error("Error in handle_payment_failure: #{e.message}")
   end
@@ -259,6 +258,6 @@ class Api::V1::SubscriptionsController < ApplicationController
       start_date: Time.current,
       end_date: nil
     ).save!
-    NotificationService.send_cancellation_notification(@current_user) if @current_user.device_token
+    NotificationService.send_cancellation_notification(@current_user) if @current_user.device_token || @current_user.mobile_number
   end
 end

@@ -1,15 +1,12 @@
 FactoryBot.define do
   factory :user do
-    first_name { "John" }
-    last_name  { "Doe" }
-    email { Faker::Internet.unique.email }
-    password { "Password123" }
-    password_confirmation { "Password123" }
-    mobile_number { "+1#{Faker::Number.number(digits: 10)}" } # E.164 format
-    role { :user }
+    first_name { 'John' }
+    last_name { 'Doe' }
+    email { Faker::Internet.email }
+    sequence(:mobile_number) { |n| "+123456789#{format('%02d', n)}" } # Generates +12345678901, +12345678902, etc.
     jti { SecureRandom.uuid }
-    device_token { nil }
-    
+    password { 'password123' }
+
     trait :without_subscription do
       after(:create) do |user|
         user.subscription.destroy if user.subscription
