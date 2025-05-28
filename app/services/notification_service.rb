@@ -62,7 +62,6 @@ class NotificationService
       user = users.first
       next unless user
 
-      # Check for existing notification to prevent duplicates
       notification_params = {
         user_id: user.id,
         notification_type: data[:notification_type],
@@ -88,7 +87,6 @@ class NotificationService
 
       if response.success?
         Rails.logger.info("FCM notification sent to token: #{token}, user IDs: #{user_ids}, title: #{title}")
-        # Create SentNotification record within a transaction to prevent race conditions
         user.with_lock do
           unless SentNotification.exists?(notification_params)
             SentNotification.create!(notification_params.merge(sent_at: Time.current))
@@ -118,7 +116,6 @@ class NotificationService
       user = User.find_by(id: user_id)
       next unless user
 
-      # Check for existing notification to prevent duplicates
       notification_params = {
         user_id: user_id,
         notification_type: template_data['notification_type'] || template_name,
@@ -136,7 +133,6 @@ class NotificationService
           content_variables: template_data.to_json
         )
         Rails.logger.info("WhatsApp notification sent to #{number}: SID #{response.sid}")
-        # Create SentNotification record within a transaction
         user.with_lock do
           unless SentNotification.exists?(notification_params)
             SentNotification.create!(notification_params.merge(sent_at: Time.current))
@@ -151,11 +147,54 @@ class NotificationService
     responses
   end
 
+  def self.send_whatsapp_opt_in_sms(mobile_number, user_id)
+    return unless mobile_number && user_id
+
+    client = Twilio::REST::Client.new(ENV['TWILIO_ACCOUNT_SID'], ENV['TWILIO_AUTH_TOKEN'])
+    from_number = ENV['TWILIO_WHATSAPP_NUMBER'] || 'whatsapp:+14155238886'
+
+    user = User.find_by(id: user_id)
+    return unless user
+
+    notification_params = {
+      user_id: user_id,
+      notification_type: 'whatsapp_opt_in',
+      action: 'whatsapp_opt_in',
+      channel: 'whatsapp'
+    }
+    return if SentNotification.exists?(notification_params)
+
+    template_data = {
+      '1' => 'Please reply with "YES" to opt in to WhatsApp notifications.',
+      'action' => 'whatsapp_opt_in',
+      'notification_type' => 'whatsapp_opt_in'
+    }
+
+    begin
+      response = client.messages.create(
+        from: from_number,
+        to: "whatsapp:#{mobile_number}",
+        content_sid: ENV['TWILIO_OPT_IN_CONFIRMATION_CONTENT_SID'],
+        content_variables: template_data.to_json
+      )
+      Rails.logger.info("WhatsApp opt-in SMS sent to #{mobile_number}: SID #{response.sid}")
+      user.with_lock do
+        unless SentNotification.exists?(notification_params)
+          SentNotification.create!(notification_params.merge(sent_at: Time.current))
+        end
+      end
+      response
+    rescue Twilio::REST::RestError => e
+      Rails.logger.error("WhatsApp opt-in SMS failed for #{mobile_number}: #{e.message} (Code: #{e.code})")
+      handle_twilio_error(e, mobile_number, user_id)
+      nil
+    end
+  end
+
   def self.send_subscription_notification(user, plan_type)
     notification_type = 'subscription'
     action = 'subscription_activated'
 
-    # FCM notification
     if user.device_token
       send_fcm_notification(
         [user.device_token],
@@ -170,7 +209,6 @@ class NotificationService
       )
     end
 
-    # WhatsApp notification
     if user.mobile_number
       template_data = {
         '1' => plan_type.capitalize,
@@ -191,7 +229,7 @@ class NotificationService
     notification_type = 'payment'
     action = 'payment_failed'
 
-    # FCM notification
+
     if user.device_token
       send_fcm_notification(
         [user.device_token],
@@ -205,7 +243,7 @@ class NotificationService
       )
     end
 
-    # WhatsApp notification
+
     if user.mobile_number
       template_data = {
         '1' => 'Please update your payment method',
@@ -225,7 +263,7 @@ class NotificationService
     notification_type = 'subscription'
     action = 'subscription_cancelled'
 
-    # FCM notification
+
     if user.device_token
       send_fcm_notification(
         [user.device_token],
@@ -239,7 +277,7 @@ class NotificationService
       )
     end
 
-    # WhatsApp notification
+
     if user.mobile_number
       template_data = {
         '1' => 'You are now on the free plan',
