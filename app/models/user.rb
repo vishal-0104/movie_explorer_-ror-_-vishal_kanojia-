@@ -60,6 +60,7 @@ class User < ApplicationRecord
   private
 
   def create_default_subscription
+    return if supervisor?
     return if subscription
     Subscription.create!(
       user: self,

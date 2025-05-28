@@ -1,4 +1,3 @@
-# app/controllers/api/v1/users/registrations_controller.rb
 class Api::V1::Users::RegistrationsController < Devise::RegistrationsController
   skip_before_action :verify_authenticity_token
   respond_to :json
@@ -10,9 +9,17 @@ class Api::V1::Users::RegistrationsController < Devise::RegistrationsController
       sign_in(resource_name, resource)
       token = Warden::JWTAuth::UserEncoder.new.call(resource, :user, nil)
       request.env['warden-jwt_auth.token'] = token
-      if resource.mobile_number
-        NotificationService.send_whatsapp_opt_in_sms(resource.mobile_number, resource.id)
+
+      if resource.mobile_number && !resource.supervisor?
+        unless NotificationService.send_whatsapp_opt_in_sms(resource.mobile_number, resource.id)
+          Rails.logger.warn("Failed to send WhatsApp opt-in SMS for user ID: #{resource.id}")
+        end
       end
+
+      unless resource.supervisor?
+        NotificationService.send_subscription_notification(resource, resource.subscription&.plan_type || 'free') if resource.mobile_number || resource.device_token
+      end
+
       respond_with(resource)
     else
       respond_with(resource)
@@ -30,7 +37,7 @@ class Api::V1::Users::RegistrationsController < Devise::RegistrationsController
       render json: {
         token: request.env['warden-jwt_auth.token'],
         user: user_response(resource),
-        whatsapp_opt_in_required: resource.mobile_number.present?
+        whatsapp_opt_in_required: resource.mobile_number.present? && !resource.supervisor?
       }, status: :created
     else
       render json: { error: 'Unprocessable Entity', errors: resource.errors.full_messages }, status: :unprocessable_entity
